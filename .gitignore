@@ -30,3 +30,17 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.cursor/*
+
+# SQLite data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Build output
+dist/
