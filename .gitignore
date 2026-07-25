@@ -51,3 +51,5 @@ web/dist/
 # internal/static/placeholder/)
 internal/static/dist/*
 !internal/static/dist/.gitkeep
+HANDOFF.md
+graphify-out/
