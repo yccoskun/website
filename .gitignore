@@ -43,4 +43,11 @@ web/node_modules/
 web/dist/
 
 # Build output
-dist/
+/dist/
+.cache/
+
+# Embedded frontend build (deploy copies web/dist here; only .gitkeep is
+# tracked so the build never dirties git — placeholder lives in
+# internal/static/placeholder/)
+internal/static/dist/*
+!internal/static/dist/.gitkeep

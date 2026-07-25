@@ -1,0 +1,44 @@
+// Package config loads server configuration from environment variables.
+package config
+
+import (
+	"os"
+	"strings"
+)
+
+// Config holds all runtime settings for the server.
+type Config struct {
+	// Addr is the listen address, e.g. "127.0.0.1:9000".
+	Addr string
+	// DBPath is the filesystem path to the SQLite database file.
+	DBPath string
+	// StaticDir, when non-empty, serves the frontend from this directory
+	// on disk instead of the embedded build (useful in development).
+	StaticDir string
+	// SiteURL is the canonical public origin (no trailing slash), used in
+	// robots.txt, sitemap, and RSS links.
+	SiteURL string
+	// AdminUsername is the expected login username. Empty disables login.
+	AdminUsername string
+	// AdminPasswordHash is a bcrypt hash of the admin password. Empty disables login.
+	AdminPasswordHash string
+}
+
+// Load reads configuration from the environment, applying defaults.
+func Load() Config {
+	return Config{
+		Addr:              envOr("ADDR", "127.0.0.1:9000"),
+		DBPath:            envOr("DB_PATH", "data/website.db"),
+		StaticDir:         os.Getenv("STATIC_DIR"),
+		SiteURL:           strings.TrimRight(envOr("SITE_URL", "https://www.yusufcancoskun.com"), "/"),
+		AdminUsername:     os.Getenv("ADMIN_USERNAME"),
+		AdminPasswordHash: os.Getenv("ADMIN_PASSWORD_HASH"),
+	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}

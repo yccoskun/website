@@ -1,0 +1,111 @@
+@import "@fontsource-variable/fraunces/wght.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/400-italic.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Type: Fraunces for display, IBM Plex Sans for body, IBM Plex Mono for
+     technical accents. Never an Inter/Roboto/system-ui pairing. */
+  --font-display: "Fraunces Variable", "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+
+  /* Anchor hue: warm ink surfaces (dark) / warm off-white paper (light). */
+  --color-paper: oklch(96.5% 0.007 84);
+  --color-paper-raised: oklch(98.5% 0.005 84);
+  --color-ink-950: oklch(18% 0.012 62);
+  --color-ink-900: oklch(23% 0.013 62);
+  --color-ink-800: oklch(30% 0.013 62);
+  --color-ink-600: oklch(46% 0.012 64);
+  --color-ink-400: oklch(64% 0.01 70);
+  --color-ink-300: oklch(74% 0.009 76);
+  --color-ink-200: oklch(86% 0.007 80);
+
+  /* Single accent: burnt orange (#C2410C territory). Keep usage under 5%
+     of any screen — links, active nav, focus marks only. */
+  --color-ember-700: oklch(50% 0.16 42);
+  --color-ember-600: oklch(55% 0.17 42);
+  --color-ember-500: oklch(63% 0.16 45);
+  --color-ember-400: oklch(71% 0.14 50);
+
+  /* Intentional, non-uniform radii: chips sit tight, cards get slightly more. */
+  --radius-chip: 2px;
+  --radius-card: 6px;
+}
+
+/* Server-rendered HTML (posts, resume bodies) — intentional, not plugin typography. */
+@layer components {
+  .prose-site {
+    @apply text-base leading-relaxed text-ink-900 dark:text-ink-200;
+  }
+
+  .prose-site > * + * {
+    @apply mt-4;
+  }
+
+  .prose-site h1,
+  .prose-site h2,
+  .prose-site h3,
+  .prose-site h4 {
+    @apply font-display font-semibold tracking-tight text-ink-950 dark:text-paper;
+  }
+
+  .prose-site h1 {
+    @apply text-3xl;
+  }
+
+  .prose-site h2 {
+    @apply text-2xl;
+  }
+
+  .prose-site h3 {
+    @apply text-xl;
+  }
+
+  .prose-site p {
+    @apply leading-relaxed;
+  }
+
+  .prose-site a {
+    @apply text-ember-600 underline decoration-ember-600/40 underline-offset-2 transition-colors hover:text-ember-700 dark:text-ember-400 dark:decoration-ember-400/40 dark:hover:text-ember-500;
+  }
+
+  .prose-site code {
+    @apply rounded-chip bg-ink-200/60 px-1 py-0.5 font-mono text-[0.9em] dark:bg-ink-800;
+  }
+
+  .prose-site pre {
+    @apply overflow-x-auto rounded-card bg-ink-950 px-4 py-3 font-mono text-sm text-ink-200 dark:bg-ink-900;
+  }
+
+  .prose-site pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+
+  .prose-site ul,
+  .prose-site ol {
+    @apply pl-5;
+  }
+
+  .prose-site ul {
+    @apply list-disc;
+  }
+
+  .prose-site ol {
+    @apply list-decimal;
+  }
+
+  .prose-site li + li {
+    @apply mt-1.5;
+  }
+
+  .prose-site blockquote {
+    @apply border-l-2 border-ink-200 pl-4 text-ink-600 italic dark:border-ink-800 dark:text-ink-400;
+  }
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yusuf Can Coskun</title>
+    <meta
+      name="description"
+      content="Personal website of Yusuf Can Coskun — placeholder content while the real thing is being written."
+    />
+    <script>
+      (function () {
+        var stored = localStorage.getItem("theme");
+        var dark =
+          stored === "light" || stored === "dark"
+            ? stored === "dark"
+            : window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.classList.toggle("dark", dark);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
