@@ -1,0 +1,22 @@
+# Reference copy of /etc/caddy/Caddyfile on the server.
+#
+# TLS terminates at Cloudflare; cloudflared forwards tunnel traffic to Caddy
+# on loopback :8080, and Caddy proxies to the Go binary on loopback :9000.
+# Nothing here listens on a public interface.
+
+{
+	auto_https off
+	admin off
+}
+
+:8080 {
+	bind 127.0.0.1
+
+	encode zstd gzip
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	reverse_proxy 127.0.0.1:9000
+}
