@@ -15,7 +15,7 @@ const fallbackNav: NavItem[] = [
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
   const base =
-    "font-mono text-xs uppercase tracking-[0.2em] transition-[transform,color] active:translate-y-0.5 md:[writing-mode:vertical-rl]";
+    "shrink-0 font-mono text-xs uppercase tracking-[0.18em] transition-[transform,color] active:translate-y-0.5 md:tracking-[0.2em] md:[writing-mode:vertical-rl]";
   if (isActive) return `${base} text-ember-600 dark:text-ember-400`;
   return `${base} text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-paper`;
 }
@@ -44,8 +44,12 @@ function Rail({ settings }: { settings: PublicSettings | null }) {
   const nav = settings?.nav?.length ? settings.nav : fallbackNav;
 
   return (
-    <header className="fixed inset-x-0 top-0 z-10 flex h-14 items-center justify-between border-b border-ink-200 bg-paper px-5 md:inset-y-0 md:right-auto md:h-auto md:w-16 md:flex-col md:border-r md:border-b-0 md:px-0 md:py-7 dark:border-ink-800 dark:bg-ink-950">
-      <nav aria-label="Primary" className="flex items-center gap-5 overflow-x-auto md:flex-col md:gap-6">
+    <header className="fixed inset-x-0 top-0 z-10 flex h-14 items-center gap-4 border-b border-ink-200 bg-paper px-5 md:inset-y-0 md:right-auto md:h-auto md:w-16 md:flex-col md:gap-0 md:border-r md:border-b-0 md:px-0 md:py-7 dark:border-ink-800 dark:bg-ink-950">
+      {/* min-w-0 + hidden scrollbar: overflow scrolls inside the nav, not over Resume. */}
+      <nav
+        aria-label="Primary"
+        className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:min-h-0 md:flex-none md:flex-col md:gap-6 md:overflow-visible"
+      >
         {nav.map((item) => (
           <NavLink key={item.path} to={item.path} className={navLinkClass} end={item.path === "/"}>
             {item.label}
