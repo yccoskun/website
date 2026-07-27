@@ -61,3 +61,15 @@ export async function apiDelete<T>(path: string): Promise<T> {
   });
   return parseEnvelope<T>(path, "DELETE", res);
 }
+
+/** POSTs a multipart file upload (field name "file"). */
+export async function apiUpload<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  return parseEnvelope<T>(path, "POST", res);
+}

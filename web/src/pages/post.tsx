@@ -52,7 +52,7 @@ export function PostPage() {
   return (
     <article>
       <p className="font-mono text-xs tracking-[0.25em] text-ink-600 uppercase dark:text-ink-400">
-        Blog
+        Notes
       </p>
       <h1 className="mt-5 font-display text-4xl leading-tight font-semibold">{data.title}</h1>
       {dateLabel ? (

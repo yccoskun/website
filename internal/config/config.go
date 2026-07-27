@@ -12,6 +12,8 @@ type Config struct {
 	Addr string
 	// DBPath is the filesystem path to the SQLite database file.
 	DBPath string
+	// UploadsDir is where admin media uploads are stored on disk.
+	UploadsDir string
 	// StaticDir, when non-empty, serves the frontend from this directory
 	// on disk instead of the embedded build (useful in development).
 	StaticDir string
@@ -29,6 +31,7 @@ func Load() Config {
 	return Config{
 		Addr:              envOr("ADDR", "127.0.0.1:9000"),
 		DBPath:            envOr("DB_PATH", "data/website.db"),
+		UploadsDir:        envOr("UPLOADS_DIR", "data/uploads"),
 		StaticDir:         os.Getenv("STATIC_DIR"),
 		SiteURL:           strings.TrimRight(envOr("SITE_URL", "https://www.yusufcancoskun.com"), "/"),
 		AdminUsername:     os.Getenv("ADMIN_USERNAME"),

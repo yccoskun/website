@@ -7,7 +7,7 @@ import { useDebouncedValue } from "@/lib/debounce";
 import { useDocumentMeta } from "@/lib/meta";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
 import type { OkResponse, PreviewResponse } from "@/types/admin";
-import type { Resume, ResumeEntry, ResumeSection } from "@/types/resume";
+import type { ResumeEntry, ResumeSection, ResumeSectionKind } from "@/types/resume";
 
 interface EntryForm {
   section_id: number;
@@ -76,11 +76,11 @@ export function AdminResumePage() {
     setError(null);
     void Promise.all([
       apiGet<ResumeEntry[]>("/api/admin/resume/entries"),
-      apiGet<Resume>("/api/resume"),
+      apiGet<ResumeSection[]>("/api/admin/resume/sections"),
     ])
-      .then(([entryList, resume]) => {
+      .then(([entryList, sectionList]) => {
         setEntries(entryList);
-        setSections(resume.sections);
+        setSections(sectionList);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -218,6 +218,7 @@ export function AdminResumePage() {
   return (
     <section>
       <ResumeHeader onNew={openCreate} disabled={sections.length === 0} />
+      <SectionManager sections={sections} onChange={load} onUnauthorized={onUnauthorized} />
       {error ? (
         <div className="mt-3">
           <ErrorState message={error} />
@@ -473,6 +474,109 @@ function ResumeHeader({
       >
         New entry
       </button>
+    </div>
+  );
+}
+
+function SectionManager({
+  sections,
+  onChange,
+  onUnauthorized,
+}: {
+  sections: ResumeSection[];
+  onChange: () => void;
+  onUnauthorized: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [kind, setKind] = useState<ResumeSectionKind>("experience");
+  const [sortOrder, setSortOrder] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function createSection(e: FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setErr(null);
+    try {
+      await apiPost<ResumeSection>("/api/admin/resume/sections", {
+        title,
+        kind,
+        sort_order: sortOrder,
+      });
+      setTitle("");
+      onChange();
+    } catch (error: unknown) {
+      if (handleAdminUnauthorized(error, onUnauthorized)) return;
+      setErr(error instanceof ApiError ? error.message : "Create section failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSection(id: number) {
+    if (!window.confirm("Delete section and all its entries?")) return;
+    try {
+      await apiDelete<OkResponse>(`/api/admin/resume/sections/${id}`);
+      onChange();
+    } catch (error: unknown) {
+      if (handleAdminUnauthorized(error, onUnauthorized)) return;
+      setErr(error instanceof ApiError ? error.message : "Delete section failed");
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-card border border-ink-200 p-3 dark:border-ink-800">
+      <p className="font-mono text-[0.65rem] tracking-[0.16em] text-ink-600 uppercase dark:text-ink-400">
+        Sections
+      </p>
+      <ul className="mt-2 space-y-1">
+        {sections.map((s) => (
+          <li key={s.id} className="flex items-center justify-between gap-2 font-mono text-xs">
+            <span>
+              #{s.id} {s.title} ({s.kind}) · sort {s.sort_order}
+            </span>
+            <button
+              type="button"
+              onClick={() => void deleteSection(s.id)}
+              className="tracking-[0.12em] text-ink-500 uppercase"
+            >
+              Delete
+            </button>
+          </li>
+        ))}
+      </ul>
+      <form onSubmit={createSection} className="mt-3 grid gap-2 sm:grid-cols-4">
+        <input
+          className={fieldInput}
+          placeholder="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+        />
+        <select
+          className={fieldInput}
+          value={kind}
+          onChange={(e) => setKind(e.target.value as ResumeSectionKind)}
+        >
+          <option value="experience">experience</option>
+          <option value="education">education</option>
+          <option value="activity">activity</option>
+        </select>
+        <input
+          type="number"
+          className={fieldInput}
+          value={sortOrder}
+          onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
+        />
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-chip border border-ink-200 px-2 py-1 font-mono text-[0.65rem] tracking-[0.14em] uppercase dark:border-ink-800"
+        >
+          Add section
+        </button>
+      </form>
+      {err ? <p className="mt-2 font-mono text-xs text-ember-600">{err}</p> : null}
     </div>
   );
 }

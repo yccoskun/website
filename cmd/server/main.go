@@ -34,10 +34,22 @@ func main() {
 		log.Printf("cleanup expired sessions: %v", err)
 	}
 
+	media, err := services.NewMediaService(db, cfg.UploadsDir)
+	if err != nil {
+		log.Fatalf("media service: %v", err)
+	}
+	pages := services.NewPageService(db)
+	resume := services.NewResumeService(db).WithPages(pages, media)
+
 	deps := handlers.Deps{
 		Posts:    services.NewPostService(db),
-		Resume:   services.NewResumeService(db),
+		Resume:   resume,
 		Sessions: sessions,
+		Settings: services.NewSettingsService(db),
+		Pages:    pages,
+		Work:     services.NewWorkService(db),
+		Studio:   services.NewStudioService(db),
+		Media:    media,
 		Config:   cfg,
 	}
 
@@ -45,8 +57,8 @@ func main() {
 		Addr:              cfg.Addr,
 		Handler:           handlers.NewRouter(static.Handler(cfg.StaticDir), deps),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}

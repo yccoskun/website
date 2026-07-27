@@ -47,6 +47,8 @@ func (d Deps) Sitemap(w http.ResponseWriter, _ *http.Request) {
 	urls := []sitemapURL{
 		{Loc: base + "/"},
 		{Loc: base + "/blog"},
+		{Loc: base + "/work"},
+		{Loc: base + "/studio"},
 		{Loc: base + "/resume"},
 	}
 
@@ -121,6 +123,22 @@ func (d Deps) RSS(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	title := "Yusuf Can Coskun"
+	desc := "Blog of Yusuf Can Coskun."
+	if d.Settings != nil {
+		pub, err := d.Settings.Public()
+		if err == nil {
+			if pub.RSSTitle != "" {
+				title = pub.RSSTitle
+			} else if pub.SiteName != "" {
+				title = pub.SiteName
+			}
+			if pub.RSSDescription != "" {
+				desc = pub.RSSDescription
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	_, _ = w.Write([]byte(xml.Header))
 	enc := xml.NewEncoder(w)
@@ -128,9 +146,9 @@ func (d Deps) RSS(w http.ResponseWriter, _ *http.Request) {
 	if err := enc.Encode(rssFeed{
 		Version: "2.0",
 		Channel: rssChannel{
-			Title:       "Yusuf Can Coskun",
+			Title:       title,
 			Link:        base + "/",
-			Description: "Blog of Yusuf Can Coskun.",
+			Description: desc,
 			Items:       items,
 		},
 	}); err != nil {

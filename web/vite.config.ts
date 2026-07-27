@@ -15,6 +15,7 @@ export default defineConfig({
     // Mirrors the Caddy reverse proxy in production: API + Go-served feeds.
     proxy: {
       "/api": "http://127.0.0.1:9000",
+      "/media": "http://127.0.0.1:9000",
       "/robots.txt": "http://127.0.0.1:9000",
       "/sitemap.xml": "http://127.0.0.1:9000",
       "/rss.xml": "http://127.0.0.1:9000",

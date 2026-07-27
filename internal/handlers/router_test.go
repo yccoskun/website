@@ -121,6 +121,12 @@ func TestSitemapAndRSSEmptyPosts(t *testing.T) {
 	if !strings.Contains(sitemapRec.Body.String(), "https://www.yusufcancoskun.com/blog") {
 		t.Fatalf("sitemap missing /blog URL")
 	}
+	if !strings.Contains(sitemapRec.Body.String(), "https://www.yusufcancoskun.com/work") {
+		t.Fatalf("sitemap missing /work URL")
+	}
+	if !strings.Contains(sitemapRec.Body.String(), "https://www.yusufcancoskun.com/studio") {
+		t.Fatalf("sitemap missing /studio URL")
+	}
 	assertSecurityHeaders(t, sitemapRec)
 
 	rssReq := httptest.NewRequest(http.MethodGet, "/rss.xml", nil)
@@ -480,12 +486,88 @@ func newIntegrationRouter(t *testing.T, db *sql.DB, cfg config.Config) http.Hand
 	spa := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	uploads := filepath.Join(t.TempDir(), "uploads")
+	media, err := services.NewMediaService(db, uploads)
+	if err != nil {
+		t.Fatalf("media service: %v", err)
+	}
+	pages := services.NewPageService(db)
+	resume := services.NewResumeService(db).WithPages(pages, media)
 	return NewRouter(spa, Deps{
 		Posts:    services.NewPostService(db),
-		Resume:   services.NewResumeService(db),
+		Resume:   resume,
 		Sessions: services.NewSessionService(db),
+		Settings: services.NewSettingsService(db),
+		Pages:    pages,
+		Work:     services.NewWorkService(db),
+		Studio:   services.NewStudioService(db),
+		Media:    media,
 		Config:   cfg,
 	})
+}
+
+func TestCMSPublicAndAdminSettings(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	pubRec := httptest.NewRecorder()
+	router.ServeHTTP(pubRec, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if pubRec.Code != http.StatusOK {
+		t.Fatalf("settings status = %d", pubRec.Code)
+	}
+	if !strings.Contains(pubRec.Body.String(), `"nav"`) {
+		t.Fatalf("settings body = %s", pubRec.Body.String())
+	}
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+
+	putBody := bytes.NewBufferString(`{"settings":{"site_name":"CMS Test","rss_title":"CMS RSS"}}`)
+	putReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings", putBody)
+	putReq.Header.Set("Content-Type", "application/json")
+	putReq.Header.Set("Cookie", "session="+cookie)
+	putRec := httptest.NewRecorder()
+	router.ServeHTTP(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("put settings status = %d body=%s", putRec.Code, putRec.Body.String())
+	}
+
+	workBody := bytes.NewBufferString(`{"name":"demo","one_liner":"x","body":"y","stack":["Go"],"status":"WIP","href":"https://example.com","sort_order":1}`)
+	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
+	workReq.Header.Set("Content-Type", "application/json")
+	workReq.Header.Set("Cookie", "session="+cookie)
+	workRec := httptest.NewRecorder()
+	router.ServeHTTP(workRec, workReq)
+	if workRec.Code != http.StatusCreated {
+		t.Fatalf("create work status = %d body=%s", workRec.Code, workRec.Body.String())
+	}
+
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/work", nil))
+	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "demo") {
+		t.Fatalf("list work = %d %s", listRec.Code, listRec.Body.String())
+	}
+
+	rssRec := httptest.NewRecorder()
+	router.ServeHTTP(rssRec, httptest.NewRequest(http.MethodGet, "/rss.xml", nil))
+	if !strings.Contains(rssRec.Body.String(), "CMS RSS") {
+		t.Fatalf("rss missing settings title: %s", rssRec.Body.String())
+	}
 }
 
 func sessionCookie(rec *httptest.ResponseRecorder) string {

@@ -23,6 +23,11 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 	mux.HandleFunc("GET /api/posts", deps.ListPublishedPosts)
 	mux.HandleFunc("GET /api/posts/{slug}", deps.GetPublishedPost)
 	mux.HandleFunc("GET /api/resume", deps.GetResume)
+	mux.HandleFunc("GET /api/settings", deps.GetSettings)
+	mux.HandleFunc("GET /api/pages/{slug}", deps.GetPage)
+	mux.HandleFunc("GET /api/work", deps.ListWork)
+	mux.HandleFunc("GET /api/studio", deps.ListStudio)
+	mux.HandleFunc("GET /media/{id}", deps.ServeMedia)
 
 	loginLimiter := middleware.NewLoginRateLimiter()
 	mux.Handle("POST /api/admin/login", loginLimiter.Middleware(http.HandlerFunc(deps.AdminLogin)))
@@ -35,6 +40,8 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 	mux.Handle("GET /api/admin/me", requireAuth(deps.AdminMe))
 
 	mux.Handle("POST /api/admin/preview", requireAuth(deps.AdminPreview))
+	mux.Handle("POST /api/admin/import", requireAuth(deps.AdminImport))
+	mux.Handle("GET /api/admin/export", requireAuth(deps.AdminExport))
 
 	mux.Handle("GET /api/admin/posts", requireAuth(deps.AdminListPosts))
 	mux.Handle("POST /api/admin/posts", requireAuth(deps.AdminCreatePost))
@@ -46,6 +53,32 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 	mux.Handle("POST /api/admin/resume/entries", requireAuth(deps.AdminCreateResumeEntry))
 	mux.Handle("PUT /api/admin/resume/entries/{id}", requireAuth(deps.AdminUpdateResumeEntry))
 	mux.Handle("DELETE /api/admin/resume/entries/{id}", requireAuth(deps.AdminDeleteResumeEntry))
+
+	mux.Handle("GET /api/admin/resume/sections", requireAuth(deps.AdminListResumeSections))
+	mux.Handle("POST /api/admin/resume/sections", requireAuth(deps.AdminCreateResumeSection))
+	mux.Handle("PUT /api/admin/resume/sections/{id}", requireAuth(deps.AdminUpdateResumeSection))
+	mux.Handle("DELETE /api/admin/resume/sections/{id}", requireAuth(deps.AdminDeleteResumeSection))
+
+	mux.Handle("GET /api/admin/settings", requireAuth(deps.AdminGetSettings))
+	mux.Handle("PUT /api/admin/settings", requireAuth(deps.AdminPutSettings))
+
+	mux.Handle("GET /api/admin/pages", requireAuth(deps.AdminListPages))
+	mux.Handle("GET /api/admin/pages/{slug}", requireAuth(deps.AdminGetPage))
+	mux.Handle("PUT /api/admin/pages/{slug}", requireAuth(deps.AdminPutPage))
+
+	mux.Handle("GET /api/admin/work", requireAuth(deps.AdminListWork))
+	mux.Handle("POST /api/admin/work", requireAuth(deps.AdminCreateWork))
+	mux.Handle("PUT /api/admin/work/{id}", requireAuth(deps.AdminUpdateWork))
+	mux.Handle("DELETE /api/admin/work/{id}", requireAuth(deps.AdminDeleteWork))
+
+	mux.Handle("GET /api/admin/studio", requireAuth(deps.AdminListStudio))
+	mux.Handle("POST /api/admin/studio", requireAuth(deps.AdminCreateStudio))
+	mux.Handle("PUT /api/admin/studio/{id}", requireAuth(deps.AdminUpdateStudio))
+	mux.Handle("DELETE /api/admin/studio/{id}", requireAuth(deps.AdminDeleteStudio))
+
+	mux.Handle("GET /api/admin/media", requireAuth(deps.AdminListMedia))
+	mux.Handle("POST /api/admin/media", requireAuth(deps.AdminUploadMedia))
+	mux.Handle("DELETE /api/admin/media/{id}", requireAuth(deps.AdminDeleteMedia))
 
 	mux.HandleFunc("GET /robots.txt", deps.Robots)
 	mux.HandleFunc("GET /sitemap.xml", deps.Sitemap)

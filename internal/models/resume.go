@@ -31,8 +31,3 @@ type ResumeEntry struct {
 	Tech      string `json:"tech"`
 	SortOrder int    `json:"sort_order"`
 }
-
-// Resume is the grouped public resume response.
-type Resume struct {
-	Sections []ResumeSection `json:"sections"`
-}

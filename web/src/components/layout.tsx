@@ -2,12 +2,16 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { MoonIcon, SunIcon } from "@/components/icons";
 import { useTheme } from "@/components/theme-provider";
+import { useApi } from "@/lib/use-api";
+import type { NavItem, PublicSettings } from "@/types/cms";
 
-const navItems = [
-  { to: "/", label: "Home" },
-  { to: "/blog", label: "Blog" },
-  { to: "/resume", label: "Resume" },
-] as const;
+const fallbackNav: NavItem[] = [
+  { label: "Home", path: "/" },
+  { label: "Notes", path: "/blog" },
+  { label: "Work", path: "/work" },
+  { label: "Studio", path: "/studio" },
+  { label: "Resume", path: "/resume" },
+];
 
 function navLinkClass({ isActive }: { isActive: boolean }): string {
   const base =
@@ -33,37 +37,36 @@ function ThemeToggle() {
 }
 
 /**
- * Left vertical rail on desktop: monogram up top, nav links bottom-aligned
- * and rotated vertical, theme toggle underneath. Collapses to a top bar on
- * mobile.
+ * Mobile: horizontal bar — nav left, theme right.
+ * Desktop: vertical rail — nav from the top, theme pinned to the bottom.
  */
-function Rail() {
+function Rail({ settings }: { settings: PublicSettings | null }) {
+  const nav = settings?.nav?.length ? settings.nav : fallbackNav;
+
   return (
     <header className="fixed inset-x-0 top-0 z-10 flex h-14 items-center justify-between border-b border-ink-200 bg-paper px-5 md:inset-y-0 md:right-auto md:h-auto md:w-16 md:flex-col md:border-r md:border-b-0 md:px-0 md:py-7 dark:border-ink-800 dark:bg-ink-950">
-      <NavLink
-        to="/"
-        className="font-display text-lg font-semibold tracking-tight transition-transform active:translate-y-0.5"
-      >
-        YCC
-      </NavLink>
-      <nav aria-label="Primary" className="flex items-center gap-5 md:mt-auto md:mb-7 md:flex-col md:gap-6">
-        {navItems.map((item) => (
-          <NavLink key={item.to} to={item.to} className={navLinkClass}>
+      <nav aria-label="Primary" className="flex items-center gap-5 overflow-x-auto md:flex-col md:gap-6">
+        {nav.map((item) => (
+          <NavLink key={item.path} to={item.path} className={navLinkClass} end={item.path === "/"}>
             {item.label}
           </NavLink>
         ))}
       </nav>
-      <ThemeToggle />
+      <div className="shrink-0 md:mt-auto">
+        <ThemeToggle />
+      </div>
     </header>
   );
 }
 
 export function Layout() {
+  const { data } = useApi<PublicSettings>("/api/settings");
+
   return (
     <div className="min-h-dvh bg-paper font-sans text-ink-900 dark:bg-ink-950 dark:text-ink-200">
-      <Rail />
-      {/* Deliberately off-center: generous left offset, tighter right margin. */}
-      <main className="px-5 pt-24 pb-24 md:pr-8 md:pl-36 lg:pl-48">
+      <Rail settings={data} />
+      {/* Off-center column: generous left offset past the rail, still more air on the right. */}
+      <main className="px-5 pt-24 pb-24 md:pr-24 md:pl-52 lg:pr-40 lg:pl-72 xl:pr-52 xl:pl-80">
         <div className="max-w-2xl">
           <Outlet />
         </div>

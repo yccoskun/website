@@ -18,6 +18,11 @@ type Deps struct {
 	Posts    *services.PostService
 	Resume   *services.ResumeService
 	Sessions *services.SessionService
+	Settings *services.SettingsService
+	Pages    *services.PageService
+	Work     *services.WorkService
+	Studio   *services.StudioService
+	Media    *services.MediaService
 	Config   config.Config
 }
 

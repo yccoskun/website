@@ -1,6 +1,7 @@
--- Seed placeholder resume entries (experience, education, activities).
+-- Legacy placeholder resume entries (historical seed; do not add more content migrations).
 -- section_id matches 0002 seed order: 1=experience, 2=education, 3=activity.
--- All of this is placeholder data meant to be replaced through the admin panel.
+-- New installs may get these placeholders; replace or delete them via Admin → Resume.
+-- Editorial content must not be shipped in migrations — use the admin API or import.
 
 INSERT INTO resume_entries (section_id, org, role, location, period, body_md, body_html, tech, sort_order) VALUES
 (

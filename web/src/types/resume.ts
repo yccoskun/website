@@ -23,7 +23,18 @@ export interface ResumeSection {
   entries: ResumeEntry[];
 }
 
+/** Resume page header chrome. */
+export interface ResumeHeader {
+  eyebrow: string;
+  headline: string;
+  blurb: string;
+  pdf_media_id: number | null;
+  pdf_url?: string;
+  accordion?: boolean;
+}
+
 /** Grouped public resume payload. */
 export interface Resume {
+  header: ResumeHeader;
   sections: ResumeSection[];
 }

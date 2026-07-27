@@ -1,7 +1,15 @@
+import { AccordionItem } from "@/components/accordion";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { useDocumentMeta } from "@/lib/meta";
 import { useApi } from "@/lib/use-api";
-import type { Resume, ResumeEntry } from "@/types/resume";
+import type { Contact, PublicSettings } from "@/types/cms";
+import type { Resume, ResumeEntry, ResumeHeader } from "@/types/resume";
+
+const linkClass =
+  "inline-block font-mono text-xs uppercase tracking-[0.18em] text-ink-600 transition-[transform,color] hover:text-ink-900 active:translate-y-0.5 dark:text-ink-400 dark:hover:text-paper";
+
+const primaryCtaClass =
+  "inline-block rounded-chip border border-ink-900 bg-ink-900 px-3 py-1.5 font-mono text-xs tracking-[0.14em] text-paper uppercase transition-transform active:translate-y-0.5 dark:border-paper dark:bg-paper dark:text-ink-950";
 
 function splitTech(tech: string): string[] {
   return tech
@@ -10,24 +18,21 @@ function splitTech(tech: string): string[] {
     .filter(Boolean);
 }
 
-function ResumeEntryBlock({ entry }: { entry: ResumeEntry }) {
-  const chips = splitTech(entry.tech);
-  const heading = [entry.role, entry.org].filter(Boolean).join(" · ");
-  const meta = [entry.period, entry.location].filter(Boolean).join(" · ");
+function entryHeading(entry: ResumeEntry): string {
+  return [entry.role, entry.org].filter(Boolean).join(" · ");
+}
 
+function entryMeta(entry: ResumeEntry): string {
+  return [entry.period, entry.location].filter(Boolean).join(" · ");
+}
+
+function ResumeEntryDetail({ entry }: { entry: ResumeEntry }) {
+  const chips = splitTech(entry.tech);
   return (
-    <li className="border-t border-ink-200 pt-8 first:border-t-0 first:pt-0 dark:border-ink-800">
-      {heading ? (
-        <h3 className="font-display text-xl font-semibold tracking-tight">{heading}</h3>
-      ) : null}
-      {meta ? (
-        <p className="mt-1.5 font-mono text-xs tracking-wide text-ink-600 dark:text-ink-400">
-          {meta}
-        </p>
-      ) : null}
+    <>
       {entry.body_html ? (
         <div
-          className="prose-site mt-4 text-[0.95rem]"
+          className="prose-site text-[0.95rem]"
           dangerouslySetInnerHTML={{ __html: entry.body_html }}
         />
       ) : null}
@@ -43,19 +48,73 @@ function ResumeEntryBlock({ entry }: { entry: ResumeEntry }) {
           ))}
         </ul>
       ) : null}
+    </>
+  );
+}
+
+function ResumeEntryBlock({ entry, accordion }: { entry: ResumeEntry; accordion: boolean }) {
+  const heading = entryHeading(entry);
+  const meta = entryMeta(entry);
+  const hasDetail = Boolean(entry.body_html) || splitTech(entry.tech).length > 0;
+
+  if (accordion && hasDetail) {
+    return (
+      <AccordionItem
+        id={`resume-entry-${entry.id}`}
+        summary={
+          <div>
+            {heading ? (
+              <h3 className="font-display text-xl font-semibold tracking-tight">{heading}</h3>
+            ) : (
+              <h3 className="font-display text-xl font-semibold tracking-tight">Entry</h3>
+            )}
+            {meta ? (
+              <p className="mt-1.5 font-mono text-xs tracking-wide text-ink-600 dark:text-ink-400">
+                {meta}
+              </p>
+            ) : null}
+          </div>
+        }
+      >
+        <ResumeEntryDetail entry={entry} />
+      </AccordionItem>
+    );
+  }
+
+  return (
+    <li className="border-t border-ink-200 pt-8 first:border-t-0 first:pt-0 dark:border-ink-800">
+      {heading ? (
+        <h3 className="font-display text-xl font-semibold tracking-tight">{heading}</h3>
+      ) : null}
+      {meta ? (
+        <p className="mt-1.5 font-mono text-xs tracking-wide text-ink-600 dark:text-ink-400">
+          {meta}
+        </p>
+      ) : null}
+      {hasDetail ? (
+        <div className="mt-4">
+          <ResumeEntryDetail entry={entry} />
+        </div>
+      ) : null}
     </li>
   );
 }
 
 export function ResumePage() {
   const { data, loading, error } = useApi<Resume>("/api/resume");
+  const settings = useApi<PublicSettings>("/api/settings");
 
-  useDocumentMeta("Resume", "Resume of Yusuf Can Coskun — placeholder entries for now.");
+  const header = data?.header;
+  const accordion = Boolean(header?.accordion);
+  useDocumentMeta(
+    header?.headline || "Resume",
+    header?.blurb || settings.data?.meta_description || "",
+  );
 
   if (loading) {
     return (
       <article>
-        <ResumeHeader />
+        <ResumeHeaderBlock header={undefined} contact={undefined} />
         <div className="mt-12">
           <LoadingState />
         </div>
@@ -66,7 +125,7 @@ export function ResumePage() {
   if (error) {
     return (
       <article>
-        <ResumeHeader />
+        <ResumeHeaderBlock header={header} contact={settings.data?.contact} />
         <div className="mt-12">
           <ErrorState message={error.message} />
         </div>
@@ -78,7 +137,7 @@ export function ResumePage() {
   if (sections.length === 0) {
     return (
       <article>
-        <ResumeHeader />
+        <ResumeHeaderBlock header={header} contact={settings.data?.contact} />
         <div className="mt-12">
           <EmptyState message="No resume entries yet." />
         </div>
@@ -88,7 +147,7 @@ export function ResumePage() {
 
   return (
     <article>
-      <ResumeHeader />
+      <ResumeHeaderBlock header={header} contact={settings.data?.contact} />
       <div className="mt-16 space-y-16">
         {sections.map((section) => (
           <section key={section.id} aria-labelledby={`resume-sec-${section.id}`}>
@@ -98,11 +157,19 @@ export function ResumePage() {
             >
               {section.title}
             </h2>
-            <ul className="mt-8 space-y-10">
-              {section.entries.map((entry) => (
-                <ResumeEntryBlock key={entry.id} entry={entry} />
-              ))}
-            </ul>
+            {accordion ? (
+              <div className="mt-4">
+                {section.entries.map((entry) => (
+                  <ResumeEntryBlock key={entry.id} entry={entry} accordion />
+                ))}
+              </div>
+            ) : (
+              <ul className="mt-8 space-y-10">
+                {section.entries.map((entry) => (
+                  <ResumeEntryBlock key={entry.id} entry={entry} accordion={false} />
+                ))}
+              </ul>
+            )}
           </section>
         ))}
       </div>
@@ -110,19 +177,59 @@ export function ResumePage() {
   );
 }
 
-function ResumeHeader() {
-  return (
-    <>
+function ResumeHeaderBlock({
+  header,
+  contact,
+}: {
+  header: ResumeHeader | undefined;
+  contact: Contact | undefined;
+}) {
+  if (!header?.headline && !header?.blurb) {
+    return (
       <p className="font-mono text-xs tracking-[0.25em] text-ink-600 uppercase dark:text-ink-400">
         Resume
       </p>
-      <h1 className="mt-5 font-display text-4xl leading-tight font-semibold">
-        Placeholder resume — real entries coming soon.
-      </h1>
-      <p className="mt-6 max-w-xl text-base leading-relaxed text-ink-600 dark:text-ink-300">
-        Everything below is placeholder data seeded at first run. The real career history
-        replaces it through the admin panel.
-      </p>
+    );
+  }
+
+  return (
+    <>
+      {header.eyebrow ? (
+        <p className="font-mono text-xs tracking-[0.25em] text-ink-600 uppercase dark:text-ink-400">
+          {header.eyebrow}
+        </p>
+      ) : null}
+      {header.headline ? (
+        <h1 className="mt-5 font-display text-4xl leading-tight font-semibold">{header.headline}</h1>
+      ) : null}
+      {header.blurb ? (
+        <p className="mt-6 max-w-xl text-base leading-relaxed text-ink-600 dark:text-ink-300">
+          {header.blurb}
+        </p>
+      ) : null}
+
+      <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+        {header.pdf_url ? (
+          <a href={header.pdf_url} download className={primaryCtaClass}>
+            Download PDF
+          </a>
+        ) : null}
+        {contact?.linkedin ? (
+          <a href={contact.linkedin} target="_blank" rel="noreferrer" className={linkClass}>
+            LinkedIn
+          </a>
+        ) : null}
+        {contact?.github ? (
+          <a href={contact.github} target="_blank" rel="noreferrer" className={linkClass}>
+            GitHub
+          </a>
+        ) : null}
+        {contact?.email ? (
+          <a href={`mailto:${contact.email}`} className={linkClass}>
+            Email
+          </a>
+        ) : null}
+      </div>
     </>
   );
 }

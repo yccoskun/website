@@ -4,17 +4,40 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { formatDate } from "@/lib/dates";
 import { useDocumentMeta } from "@/lib/meta";
 import { useApi } from "@/lib/use-api";
+import type { NotesPageBody, Page } from "@/types/cms";
 import type { PostSummary } from "@/types/post";
 
+function parseNotesBody(raw: string): NotesPageBody {
+  try {
+    const parsed = JSON.parse(raw) as NotesPageBody;
+    return {
+      eyebrow: parsed.eyebrow ?? "Notes",
+      headline: parsed.headline ?? "",
+      intro: parsed.intro ?? "",
+      empty_message: parsed.empty_message || "Nothing published yet.",
+    };
+  } catch {
+    return {
+      eyebrow: "Notes",
+      headline: "",
+      intro: "",
+      empty_message: "Nothing published yet.",
+    };
+  }
+}
+
 export function BlogPage() {
-  const { data, loading, error } = useApi<PostSummary[]>("/api/posts");
+  const page = useApi<Page>("/api/pages/notes");
+  const posts = useApi<PostSummary[]>("/api/posts");
 
-  useDocumentMeta("Blog", "Blog of Yusuf Can Coskun — nothing published yet.");
+  const body = page.data ? parseNotesBody(page.data.body_json) : null;
 
-  if (loading) {
+  useDocumentMeta(page.data?.title || "Notes", page.data?.meta_description || "");
+
+  if (page.loading || posts.loading) {
     return (
       <article>
-        <BlogHeader />
+        <NotesHeader body={body} />
         <div className="mt-14">
           <LoadingState />
         </div>
@@ -22,23 +45,27 @@ export function BlogPage() {
     );
   }
 
-  if (error) {
+  if (page.error) {
+    return <ErrorState message={page.error.message} />;
+  }
+
+  if (posts.error) {
     return (
       <article>
-        <BlogHeader />
+        <NotesHeader body={body} />
         <div className="mt-14">
-          <ErrorState message={error.message} />
+          <ErrorState message={posts.error.message} />
         </div>
       </article>
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!posts.data || posts.data.length === 0) {
     return (
       <article>
-        <BlogHeader />
+        <NotesHeader body={body} />
         <div className="mt-14">
-          <EmptyState message="Nothing published yet — drafts stay off this list until they are ready." />
+          <EmptyState message={body?.empty_message || "Nothing published yet."} />
         </div>
       </article>
     );
@@ -46,9 +73,9 @@ export function BlogPage() {
 
   return (
     <article>
-      <BlogHeader />
+      <NotesHeader body={body} />
       <ul className="mt-14 space-y-12">
-        {data.map((post, i) => (
+        {posts.data.map((post, i) => (
           <li key={post.id} className={i % 2 === 1 ? "md:ml-8" : ""}>
             <Link
               to={`/blog/${post.slug}`}
@@ -73,19 +100,23 @@ export function BlogPage() {
   );
 }
 
-function BlogHeader() {
+function NotesHeader({ body }: { body: NotesPageBody | null }) {
+  if (!body) return null;
   return (
     <>
-      <p className="font-mono text-xs tracking-[0.25em] text-ink-600 uppercase dark:text-ink-400">
-        Blog
-      </p>
-      <h1 className="mt-5 font-display text-4xl leading-tight font-semibold">
-        Nothing here yet — posts land through the admin panel.
-      </h1>
-      <p className="mt-6 max-w-xl text-base leading-relaxed text-ink-600 dark:text-ink-300">
-        This page fills itself once the first post is published. Until then it stays honestly
-        empty.
-      </p>
+      {body.eyebrow ? (
+        <p className="font-mono text-xs tracking-[0.25em] text-ink-600 uppercase dark:text-ink-400">
+          {body.eyebrow}
+        </p>
+      ) : null}
+      {body.headline ? (
+        <h1 className="mt-5 font-display text-4xl leading-tight font-semibold">{body.headline}</h1>
+      ) : null}
+      {body.intro ? (
+        <p className="mt-6 max-w-xl text-base leading-relaxed text-ink-600 dark:text-ink-300">
+          {body.intro}
+        </p>
+      ) : null}
     </>
   );
 }

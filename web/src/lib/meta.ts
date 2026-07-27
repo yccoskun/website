@@ -5,7 +5,7 @@ const SITE_SUFFIX = " · Yusuf Can Coskun";
 /** Sets document.title and meta description for the current route. */
 export function useDocumentMeta(title: string, description: string): void {
   useEffect(() => {
-    document.title = `${title}${SITE_SUFFIX}`;
+    document.title = title ? `${title}${SITE_SUFFIX}` : "Yusuf Can Coskun";
 
     let meta = document.querySelector('meta[name="description"]');
     if (!meta) {

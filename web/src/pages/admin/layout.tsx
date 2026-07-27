@@ -7,6 +7,11 @@ import { useAdminSession } from "@/pages/admin/session";
 const navItems = [
   { to: "/admin/posts", label: "Posts", end: false },
   { to: "/admin/resume", label: "Resume", end: true },
+  { to: "/admin/work", label: "Work", end: true },
+  { to: "/admin/studio", label: "Studio", end: true },
+  { to: "/admin/pages", label: "Pages", end: true },
+  { to: "/admin/settings", label: "Settings", end: true },
+  { to: "/admin/media", label: "Media", end: true },
 ] as const;
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -37,10 +42,12 @@ export function AdminLayout() {
 
   return (
     <div className="min-h-dvh bg-paper font-sans text-ink-900 dark:bg-ink-950 dark:text-ink-200">
-      {/* Mobile: top bar. md+: fixed dense sidebar. */}
       <aside className="fixed inset-x-0 top-0 z-10 flex h-14 items-center gap-3 border-b border-ink-200 bg-paper-raised px-3 md:inset-y-0 md:right-auto md:h-auto md:w-40 md:flex-col md:items-stretch md:gap-0 md:border-r md:border-b-0 md:px-3 md:py-4 lg:w-44 dark:border-ink-800 dark:bg-ink-900">
         <p className="shrink-0 font-display text-base font-semibold tracking-tight">YCC admin</p>
-        <nav aria-label="Admin" className="flex flex-1 items-center gap-1 md:mt-6 md:flex-col md:items-stretch md:gap-0.5">
+        <nav
+          aria-label="Admin"
+          className="flex flex-1 items-center gap-1 overflow-x-auto md:mt-6 md:flex-col md:items-stretch md:gap-0.5 md:overflow-visible"
+        >
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
               {item.label}

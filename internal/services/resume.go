@@ -2,15 +2,19 @@ package services
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yccoskun/website/internal/models"
 )
 
 // ResumeService manages resume sections and entries.
 type ResumeService struct {
-	db *sql.DB
+	db     *sql.DB
+	pages  *PageService
+	media  *MediaService
 }
 
 // NewResumeService constructs a ResumeService backed by db.
@@ -18,16 +22,30 @@ func NewResumeService(db *sql.DB) *ResumeService {
 	return &ResumeService{db: db}
 }
 
+// WithPages attaches page/media services so GetGrouped can include header chrome.
+func (s *ResumeService) WithPages(pages *PageService, media *MediaService) *ResumeService {
+	s.pages = pages
+	s.media = media
+	return s
+}
+
 // ResumeEntryInput is the writable subset of a resume entry.
 type ResumeEntryInput struct {
-	SectionID int64
-	Org       string
-	Role      string
-	Location  string
-	Period    string
-	BodyMD    string
-	Tech      string
-	SortOrder int
+	SectionID int64  `json:"section_id"`
+	Org       string `json:"org"`
+	Role      string `json:"role"`
+	Location  string `json:"location"`
+	Period    string `json:"period"`
+	BodyMD    string `json:"body_md"`
+	Tech      string `json:"tech"`
+	SortOrder int    `json:"sort_order"`
+}
+
+// ResumeSectionInput is the writable subset of a resume section.
+type ResumeSectionInput struct {
+	Kind      models.ResumeSectionKind `json:"kind"`
+	Title     string                   `json:"title"`
+	SortOrder int                      `json:"sort_order"`
 }
 
 const resumeEntryColumns = `id, section_id, org, role, location, period, body_md, body_html, tech, sort_order`
@@ -91,7 +109,30 @@ func (s *ResumeService) GetGrouped() (models.Resume, error) {
 			sections[i].Entries = entries
 		}
 	}
-	return models.Resume{Sections: sections}, nil
+
+	header := models.ResumeHeader{}
+	if s.pages != nil {
+		page, err := s.pages.Get(PageResume)
+		if err != nil {
+			return models.Resume{}, err
+		}
+		pdfURL := ""
+		var body ResumePageBody
+		_ = jsonUnmarshal(page.BodyJSON, &body)
+		if s.media != nil {
+			pdfURL = s.media.URLForID(body.PDFMediaID)
+		}
+		header = ParseResumeHeader(page.BodyJSON, pdfURL)
+	}
+
+	return models.Resume{Header: header, Sections: sections}, nil
+}
+
+func jsonUnmarshal(raw string, dst any) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return json.Unmarshal([]byte(raw), dst)
 }
 
 // AdminListEntries returns all resume entries ordered for admin display.
@@ -210,6 +251,115 @@ func (s *ResumeService) DeleteEntry(id int64) error {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("delete resume entry rows: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func validateSectionKind(kind models.ResumeSectionKind) error {
+	switch kind {
+	case models.ResumeKindExperience, models.ResumeKindEducation, models.ResumeKindActivity:
+		return nil
+	default:
+		return fmt.Errorf("%w: kind must be experience, education, or activity", ErrValidation)
+	}
+}
+
+// ListSections returns all resume sections (no entries).
+func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
+	rows, err := s.db.Query(
+		`SELECT id, kind, title, sort_order FROM resume_sections ORDER BY sort_order ASC, id ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list resume sections: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]models.ResumeSection, 0)
+	for rows.Next() {
+		var sec models.ResumeSection
+		if err := rows.Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder); err != nil {
+			return nil, fmt.Errorf("scan resume section: %w", err)
+		}
+		sec.Entries = []models.ResumeEntry{}
+		out = append(out, sec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate resume sections: %w", err)
+	}
+	return out, nil
+}
+
+// GetSectionByID returns a section without entries.
+func (s *ResumeService) GetSectionByID(id int64) (models.ResumeSection, error) {
+	var sec models.ResumeSection
+	err := s.db.QueryRow(
+		`SELECT id, kind, title, sort_order FROM resume_sections WHERE id = ?`, id,
+	).Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ResumeSection{}, ErrNotFound
+	}
+	if err != nil {
+		return models.ResumeSection{}, fmt.Errorf("get resume section: %w", err)
+	}
+	sec.Entries = []models.ResumeEntry{}
+	return sec, nil
+}
+
+// CreateSection inserts a resume section.
+func (s *ResumeService) CreateSection(in ResumeSectionInput) (models.ResumeSection, error) {
+	if err := validateSectionKind(in.Kind); err != nil {
+		return models.ResumeSection{}, err
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return models.ResumeSection{}, fmt.Errorf("%w: title is required", ErrValidation)
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO resume_sections (kind, title, sort_order) VALUES (?, ?, ?)`,
+		in.Kind, strings.TrimSpace(in.Title), in.SortOrder,
+	)
+	if err != nil {
+		return models.ResumeSection{}, fmt.Errorf("create resume section: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return models.ResumeSection{}, fmt.Errorf("create resume section id: %w", err)
+	}
+	return s.GetSectionByID(id)
+}
+
+// UpdateSection replaces a resume section.
+func (s *ResumeService) UpdateSection(id int64, in ResumeSectionInput) (models.ResumeSection, error) {
+	if _, err := s.GetSectionByID(id); err != nil {
+		return models.ResumeSection{}, err
+	}
+	if err := validateSectionKind(in.Kind); err != nil {
+		return models.ResumeSection{}, err
+	}
+	if strings.TrimSpace(in.Title) == "" {
+		return models.ResumeSection{}, fmt.Errorf("%w: title is required", ErrValidation)
+	}
+	_, err := s.db.Exec(
+		`UPDATE resume_sections SET kind = ?, title = ?, sort_order = ? WHERE id = ?`,
+		in.Kind, strings.TrimSpace(in.Title), in.SortOrder, id,
+	)
+	if err != nil {
+		return models.ResumeSection{}, fmt.Errorf("update resume section: %w", err)
+	}
+	return s.GetSectionByID(id)
+}
+
+// DeleteSection removes a section and cascades entries.
+func (s *ResumeService) DeleteSection(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM resume_sections WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete resume section: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete resume section rows: %w", err)
 	}
 	if n == 0 {
 		return ErrNotFound
