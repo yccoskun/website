@@ -65,7 +65,6 @@ const EMPTY_BODIES: Record<(typeof SLUGS)[number], string> = {
       headline: "",
       blurb: "",
       pdf_media_id: null,
-      accordion: false,
     },
     null,
     2,

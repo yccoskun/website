@@ -15,6 +15,7 @@ type ResumeSection struct {
 	Kind      ResumeSectionKind `json:"kind"`
 	Title     string            `json:"title"`
 	SortOrder int               `json:"sort_order"`
+	Accordion bool              `json:"accordion"`
 	Entries   []ResumeEntry     `json:"entries"`
 }
 

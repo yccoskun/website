@@ -20,6 +20,7 @@ export interface ResumeSection {
   kind: ResumeSectionKind;
   title: string;
   sort_order: number;
+  accordion: boolean;
   entries: ResumeEntry[];
 }
 
@@ -30,7 +31,6 @@ export interface ResumeHeader {
   blurb: string;
   pdf_media_id: number | null;
   pdf_url?: string;
-  accordion?: boolean;
 }
 
 /** Grouped public resume payload. */

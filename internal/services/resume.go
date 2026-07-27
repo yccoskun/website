@@ -46,9 +46,11 @@ type ResumeSectionInput struct {
 	Kind      models.ResumeSectionKind `json:"kind"`
 	Title     string                   `json:"title"`
 	SortOrder int                      `json:"sort_order"`
+	Accordion bool                     `json:"accordion"`
 }
 
 const resumeEntryColumns = `id, section_id, org, role, location, period, body_md, body_html, tech, sort_order`
+const resumeSectionColumns = `id, kind, title, sort_order, accordion`
 
 func scanResumeEntry(scanner interface {
 	Scan(dest ...any) error
@@ -61,10 +63,33 @@ func scanResumeEntry(scanner interface {
 	return e, err
 }
 
+func scanResumeSection(scanner interface {
+	Scan(dest ...any) error
+}) (models.ResumeSection, error) {
+	var (
+		sec       models.ResumeSection
+		accordion int
+	)
+	err := scanner.Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder, &accordion)
+	if err != nil {
+		return models.ResumeSection{}, err
+	}
+	sec.Accordion = accordion != 0
+	sec.Entries = []models.ResumeEntry{}
+	return sec, nil
+}
+
+func accordionInt(on bool) int {
+	if on {
+		return 1
+	}
+	return 0
+}
+
 // GetGrouped returns all sections with their entries for the public resume API.
 func (s *ResumeService) GetGrouped() (models.Resume, error) {
 	secRows, err := s.db.Query(
-		`SELECT id, kind, title, sort_order FROM resume_sections ORDER BY sort_order ASC, id ASC`,
+		`SELECT ` + resumeSectionColumns + ` FROM resume_sections ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
 		return models.Resume{}, fmt.Errorf("list resume sections: %w", err)
@@ -73,11 +98,10 @@ func (s *ResumeService) GetGrouped() (models.Resume, error) {
 
 	sections := make([]models.ResumeSection, 0)
 	for secRows.Next() {
-		var sec models.ResumeSection
-		if err := secRows.Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder); err != nil {
+		sec, err := scanResumeSection(secRows)
+		if err != nil {
 			return models.Resume{}, fmt.Errorf("scan resume section: %w", err)
 		}
-		sec.Entries = []models.ResumeEntry{}
 		sections = append(sections, sec)
 	}
 	if err := secRows.Err(); err != nil {
@@ -270,7 +294,7 @@ func validateSectionKind(kind models.ResumeSectionKind) error {
 // ListSections returns all resume sections (no entries).
 func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
 	rows, err := s.db.Query(
-		`SELECT id, kind, title, sort_order FROM resume_sections ORDER BY sort_order ASC, id ASC`,
+		`SELECT ` + resumeSectionColumns + ` FROM resume_sections ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list resume sections: %w", err)
@@ -279,11 +303,10 @@ func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
 
 	out := make([]models.ResumeSection, 0)
 	for rows.Next() {
-		var sec models.ResumeSection
-		if err := rows.Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder); err != nil {
+		sec, err := scanResumeSection(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan resume section: %w", err)
 		}
-		sec.Entries = []models.ResumeEntry{}
 		out = append(out, sec)
 	}
 	if err := rows.Err(); err != nil {
@@ -294,17 +317,15 @@ func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
 
 // GetSectionByID returns a section without entries.
 func (s *ResumeService) GetSectionByID(id int64) (models.ResumeSection, error) {
-	var sec models.ResumeSection
-	err := s.db.QueryRow(
-		`SELECT id, kind, title, sort_order FROM resume_sections WHERE id = ?`, id,
-	).Scan(&sec.ID, &sec.Kind, &sec.Title, &sec.SortOrder)
+	sec, err := scanResumeSection(s.db.QueryRow(
+		`SELECT `+resumeSectionColumns+` FROM resume_sections WHERE id = ?`, id,
+	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResumeSection{}, ErrNotFound
 	}
 	if err != nil {
 		return models.ResumeSection{}, fmt.Errorf("get resume section: %w", err)
 	}
-	sec.Entries = []models.ResumeEntry{}
 	return sec, nil
 }
 
@@ -317,8 +338,8 @@ func (s *ResumeService) CreateSection(in ResumeSectionInput) (models.ResumeSecti
 		return models.ResumeSection{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
 	res, err := s.db.Exec(
-		`INSERT INTO resume_sections (kind, title, sort_order) VALUES (?, ?, ?)`,
-		in.Kind, strings.TrimSpace(in.Title), in.SortOrder,
+		`INSERT INTO resume_sections (kind, title, sort_order, accordion) VALUES (?, ?, ?, ?)`,
+		in.Kind, strings.TrimSpace(in.Title), in.SortOrder, accordionInt(in.Accordion),
 	)
 	if err != nil {
 		return models.ResumeSection{}, fmt.Errorf("create resume section: %w", err)
@@ -342,8 +363,8 @@ func (s *ResumeService) UpdateSection(id int64, in ResumeSectionInput) (models.R
 		return models.ResumeSection{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
 	_, err := s.db.Exec(
-		`UPDATE resume_sections SET kind = ?, title = ?, sort_order = ? WHERE id = ?`,
-		in.Kind, strings.TrimSpace(in.Title), in.SortOrder, id,
+		`UPDATE resume_sections SET kind = ?, title = ?, sort_order = ?, accordion = ? WHERE id = ?`,
+		in.Kind, strings.TrimSpace(in.Title), in.SortOrder, accordionInt(in.Accordion), id,
 	)
 	if err != nil {
 		return models.ResumeSection{}, fmt.Errorf("update resume section: %w", err)

@@ -46,6 +46,7 @@ type resumeSectionRequest struct {
 	Kind      models.ResumeSectionKind `json:"kind"`
 	Title     string                   `json:"title"`
 	SortOrder int                      `json:"sort_order"`
+	Accordion bool                     `json:"accordion"`
 }
 
 // GetSettings serves GET /api/settings.
@@ -343,7 +344,7 @@ func (d Deps) AdminCreateResumeSection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sec, err := d.Resume.CreateSection(services.ResumeSectionInput{
-		Kind: body.Kind, Title: body.Title, SortOrder: body.SortOrder,
+		Kind: body.Kind, Title: body.Title, SortOrder: body.SortOrder, Accordion: body.Accordion,
 	})
 	if err != nil {
 		mapServiceError(w, err)
@@ -365,7 +366,7 @@ func (d Deps) AdminUpdateResumeSection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sec, err := d.Resume.UpdateSection(id, services.ResumeSectionInput{
-		Kind: body.Kind, Title: body.Title, SortOrder: body.SortOrder,
+		Kind: body.Kind, Title: body.Title, SortOrder: body.SortOrder, Accordion: body.Accordion,
 	})
 	if err != nil {
 		mapServiceError(w, err)

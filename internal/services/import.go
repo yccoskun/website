@@ -114,7 +114,7 @@ func (s *ImportService) Export() (ContentImport, error) {
 	sectionIndex := make(map[int64]int64, len(sections))
 	for i, sec := range sections {
 		out.Sections = append(out.Sections, ResumeSectionInput{
-			Kind: sec.Kind, Title: sec.Title, SortOrder: sec.SortOrder,
+			Kind: sec.Kind, Title: sec.Title, SortOrder: sec.SortOrder, Accordion: sec.Accordion,
 		})
 		sectionIndex[sec.ID] = int64(i + 1)
 	}

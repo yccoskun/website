@@ -490,6 +490,7 @@ function SectionManager({
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<ResumeSectionKind>("experience");
   const [sortOrder, setSortOrder] = useState(0);
+  const [accordion, setAccordion] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -502,14 +503,32 @@ function SectionManager({
         title,
         kind,
         sort_order: sortOrder,
+        accordion,
       });
       setTitle("");
+      setAccordion(false);
       onChange();
     } catch (error: unknown) {
       if (handleAdminUnauthorized(error, onUnauthorized)) return;
       setErr(error instanceof ApiError ? error.message : "Create section failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function toggleAccordion(section: ResumeSection) {
+    setErr(null);
+    try {
+      await apiPut<ResumeSection>(`/api/admin/resume/sections/${section.id}`, {
+        kind: section.kind,
+        title: section.title,
+        sort_order: section.sort_order,
+        accordion: !section.accordion,
+      });
+      onChange();
+    } catch (error: unknown) {
+      if (handleAdminUnauthorized(error, onUnauthorized)) return;
+      setErr(error instanceof ApiError ? error.message : "Update section failed");
     }
   }
 
@@ -531,21 +550,31 @@ function SectionManager({
       </p>
       <ul className="mt-2 space-y-1">
         {sections.map((s) => (
-          <li key={s.id} className="flex items-center justify-between gap-2 font-mono text-xs">
+          <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
             <span>
               #{s.id} {s.title} ({s.kind}) · sort {s.sort_order}
+              {s.accordion ? " · accordion" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => void deleteSection(s.id)}
-              className="tracking-[0.12em] text-ink-500 uppercase"
-            >
-              Delete
-            </button>
+            <span className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void toggleAccordion(s)}
+                className="tracking-[0.12em] text-ink-500 uppercase"
+              >
+                {s.accordion ? "Accordion off" : "Accordion on"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteSection(s.id)}
+                className="tracking-[0.12em] text-ink-500 uppercase"
+              >
+                Delete
+              </button>
+            </span>
           </li>
         ))}
       </ul>
-      <form onSubmit={createSection} className="mt-3 grid gap-2 sm:grid-cols-4">
+      <form onSubmit={createSection} className="mt-3 grid gap-2 sm:grid-cols-5">
         <input
           className={fieldInput}
           placeholder="Title"
@@ -568,6 +597,15 @@ function SectionManager({
           value={sortOrder}
           onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
         />
+        <label className="flex items-center gap-2 font-mono text-[0.65rem] tracking-[0.12em] text-ink-600 uppercase dark:text-ink-400">
+          <input
+            type="checkbox"
+            checked={accordion}
+            onChange={(e) => setAccordion(e.target.checked)}
+            className="size-3.5 accent-ember-600"
+          />
+          Accordion
+        </label>
         <button
           type="submit"
           disabled={saving}

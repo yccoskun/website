@@ -111,8 +111,6 @@ export interface ResumePageBody {
   headline: string;
   blurb: string;
   pdf_media_id: number | null;
-  /** When true, resume entries collapse body under the heading row. */
-  accordion?: boolean;
 }
 
 export interface NotFoundPageBody {

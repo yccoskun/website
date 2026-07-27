@@ -105,7 +105,6 @@ export function ResumePage() {
   const settings = useApi<PublicSettings>("/api/settings");
 
   const header = data?.header;
-  const accordion = Boolean(header?.accordion);
   useDocumentMeta(
     header?.headline || "Resume",
     header?.blurb || settings.data?.meta_description || "",
@@ -157,7 +156,7 @@ export function ResumePage() {
             >
               {section.title}
             </h2>
-            {accordion ? (
+            {section.accordion ? (
               <div className="mt-4">
                 {section.entries.map((entry) => (
                   <ResumeEntryBlock key={entry.id} entry={entry} accordion />

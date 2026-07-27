@@ -149,10 +149,22 @@ func TestResumeSectionCRUD(t *testing.T) {
 	db := openCMSDB(t)
 	r := services.NewResumeService(db)
 	sec, err := r.CreateSection(services.ResumeSectionInput{
-		Kind: models.ResumeKindExperience, Title: "Exp", SortOrder: 10,
+		Kind: models.ResumeKindExperience, Title: "Exp", SortOrder: 10, Accordion: true,
 	})
 	if err != nil {
 		t.Fatalf("create section: %v", err)
+	}
+	if !sec.Accordion {
+		t.Fatalf("expected accordion true, got %+v", sec)
+	}
+	sec, err = r.UpdateSection(sec.ID, services.ResumeSectionInput{
+		Kind: sec.Kind, Title: sec.Title, SortOrder: sec.SortOrder, Accordion: false,
+	})
+	if err != nil {
+		t.Fatalf("update section: %v", err)
+	}
+	if sec.Accordion {
+		t.Fatalf("expected accordion false after update, got %+v", sec)
 	}
 	_, err = r.CreateEntry(services.ResumeEntryInput{
 		SectionID: sec.ID, Org: "Org", Role: "Role", BodyMD: "hi",

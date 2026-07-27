@@ -76,7 +76,6 @@ type ResumeHeader struct {
 	Blurb      string `json:"blurb"`
 	PDFMediaID *int64 `json:"pdf_media_id"`
 	PDFURL     string `json:"pdf_url,omitempty"`
-	Accordion  bool   `json:"accordion"`
 }
 
 // Resume is the grouped public resume response including header chrome.

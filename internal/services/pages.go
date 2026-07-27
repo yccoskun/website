@@ -182,7 +182,6 @@ type ResumePageBody struct {
 	Headline   string `json:"headline"`
 	Blurb      string `json:"blurb"`
 	PDFMediaID *int64 `json:"pdf_media_id"`
-	Accordion  bool   `json:"accordion"`
 }
 
 // NotFoundPageBody is 404 chrome.
@@ -238,7 +237,6 @@ func ParseResumeHeader(bodyJSON string, pdfURL string) models.ResumeHeader {
 		Blurb:      b.Blurb,
 		PDFMediaID: b.PDFMediaID,
 		PDFURL:     pdfURL,
-		Accordion:  b.Accordion,
 	}
 	return h
 }
