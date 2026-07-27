@@ -209,7 +209,7 @@ function ResumeHeaderBlock({
 
       <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
         {header.pdf_url ? (
-          <a href={header.pdf_url} download className={primaryCtaClass}>
+          <a href={header.pdf_url} download="YusufCan-Coskun-CV.pdf" className={primaryCtaClass}>
             Download PDF
           </a>
         ) : null}
