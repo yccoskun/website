@@ -15,6 +15,20 @@ Browser ──HTTPS──> Cloudflare ──tunnel──> cloudflared ──> Ca
   and `ssh.yusufcancoskun.com` to sshd (SSH also goes through the tunnel).
 - Backups are Hetzner server snapshots — no backup scripts or timers in the app.
 
+## Rate limiting
+
+Ownership by hop:
+
+| Hop | Role |
+|-----|------|
+| **Cloudflare** | Edge / WAF / volumetric rate limiting (preferred first line of defense). |
+| **Go app** | Login-attempt throttle on `POST /api/admin/login`: ~10 attempts / 15 minutes **per real client IP**. When the peer is loopback (Caddy), the app keys on `CF-Connecting-IP`; otherwise it uses `RemoteAddr`. Failed and successful attempts both count. |
+| **Caddy** | Strips spoofable client IP headers (`X-Forwarded-For`, `X-Real-IP`) and forwards Cloudflare’s `CF-Connecting-IP`. Does **not** own rate limits. |
+
+Do **not** trust raw `X-Forwarded-For` from the public internet without a trusted hop. The app never keys the login limiter on `X-Forwarded-For`.
+
+Trust boundary: the Go process binds loopback only, so the only peers that can present `CF-Connecting-IP` are local proxies (Caddy). A process on the same host could spoof that header; that is accepted for this single-tenant deploy.
+
 ## Layout on the server
 
 | Path | Purpose |
