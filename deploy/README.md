@@ -29,6 +29,88 @@ Do **not** trust raw `X-Forwarded-For` from the public internet without a truste
 
 Trust boundary: the Go process binds loopback only, so the only peers that can present `CF-Connecting-IP` are local proxies (Caddy). A process on the same host could spoof that header; that is accepted for this single-tenant deploy.
 
+## Security logging
+
+The app writes security events via Go's default `log` package to **stderr**; systemd
+captures them in **journald** under the `website` unit (`deploy/website.service` →
+`/etc/systemd/system/website.service`).
+
+### Viewing logs
+
+Follow live:
+
+```bash
+sudo journalctl -u website -f
+```
+
+Recent window:
+
+```bash
+sudo journalctl -u website --since "1 hour ago"
+sudo journalctl -u website --since today
+```
+
+Security events only (structured prefix `security event=`):
+
+```bash
+sudo journalctl -u website --since "24 hours ago" | grep 'security event='
+sudo journalctl -u website -f | grep --line-buffered 'security event='
+```
+
+Filter by event name:
+
+```bash
+sudo journalctl -u website --since today | grep 'security event=login_failure'
+sudo journalctl -u website --since today | grep 'security event=rate_limit'
+```
+
+Count `rate_limit` hits per IP (spot repeat offenders):
+
+```bash
+sudo journalctl -u website --since "24 hours ago" \
+  | grep 'security event=rate_limit' \
+  | sed -n 's/.* ip=\([^ ]*\).*/\1/p' \
+  | sort | uniq -c | sort -rn | head
+```
+
+### Log format
+
+Each line is a single space-separated record:
+
+```
+security event=<name> ip=<ip> [<key>=<value> ...]
+```
+
+| Event | When emitted | Extra fields |
+|-------|----------------|--------------|
+| `login_failure` | Failed admin login | — |
+| `rate_limit` | Login throttle hit (429) | — |
+| `export` | Successful content export | — |
+| `import` | Successful content import | `pages_upserted`, `work_created` |
+| `media_delete` | Media item deleted | `id` |
+
+Successful admin login is **not** logged — there is no `login_success` event.
+
+Example:
+
+```
+security event=import ip=203.0.113.5 pages_upserted=12 work_created=3
+```
+
+Logs **never** include usernames, passwords, session tokens, or full export/import
+payloads — only event metadata and counts.
+
+### What to alert or investigate
+
+| Signal | Likely cause | Action |
+|--------|----------------|--------|
+| Many `rate_limit` lines from one `ip=` | Login brute force or 429 storm | Check Cloudflare/WAF; consider blocking IP at edge; review whether admin login should stay exposed |
+| Burst of `login_failure` | Wrong password attempts or credential stuffing | Correlate IPs; confirm no legitimate lockout; tighten edge rules if sustained |
+| `export`, `import`, or `media_delete` outside known admin activity | Possible compromise or unexpected automation | Confirm you (or CI) did not run it; rotate `ADMIN_PASSWORD_HASH`; review session/access |
+
+For a single-tenant site, a few failed logins are normal noise; sustained clusters from
+unfamiliar IPs or off-hours bulk `export`/`import` deserve a closer look.
+
 ## Layout on the server
 
 | Path | Purpose |

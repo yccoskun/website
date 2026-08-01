@@ -9,7 +9,9 @@ import (
 
 	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/config"
+	"github.com/yccoskun/website/internal/middleware"
 	"github.com/yccoskun/website/internal/response"
+	"github.com/yccoskun/website/internal/securitylog"
 	"github.com/yccoskun/website/internal/services"
 )
 
@@ -154,8 +156,9 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	passOK := auth.CheckPassword(hash, body.Password)
 	userOK := d.Config.AdminUsername != "" &&
 		d.Config.AdminPasswordHash != "" &&
-		body.Username == d.Config.AdminUsername
+		auth.ConstantTimeUsernameEqual(body.Username, d.Config.AdminUsername)
 	if !userOK || !passOK {
+		securitylog.Event(securitylog.EventLoginFailure, middleware.ClientIP(r))
 		response.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}

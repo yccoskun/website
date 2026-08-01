@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yccoskun/website/internal/response"
+	"github.com/yccoskun/website/internal/securitylog"
 )
 
 const (
@@ -36,8 +37,9 @@ func NewLoginRateLimiter() *LoginRateLimiter {
 // Every request counts (failed and successful) because the limiter runs before the handler.
 func (l *LoginRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := clientIP(r)
+		ip := ClientIP(r)
 		if !l.allow(ip) {
+			securitylog.Event(securitylog.EventRateLimit, ip)
 			response.Error(w, http.StatusTooManyRequests, "too many login attempts")
 			return
 		}
@@ -96,10 +98,10 @@ func (l *LoginRateLimiter) evictIfFull() {
 	}
 }
 
-// clientIP returns the real client IP when the peer is a trusted loopback proxy
+// ClientIP returns the real client IP when the peer is a trusted loopback proxy
 // and Cloudflare's CF-Connecting-IP is present and valid. Otherwise it uses
 // RemoteAddr. X-Forwarded-For is never trusted.
-func clientIP(r *http.Request) string {
+func ClientIP(r *http.Request) string {
 	peer := peerHost(r.RemoteAddr)
 	if isTrustedProxy(peer) {
 		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {

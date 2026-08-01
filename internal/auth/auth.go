@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"strings"
@@ -10,8 +11,33 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+const maxUsernameLength = 256
+
 // SessionCookieName is the HTTP cookie that carries the raw session token.
 const SessionCookieName = "session"
+
+// ConstantTimeUsernameEqual reports whether two usernames match without leaking
+// timing information via early returns on content (over-max inputs return false).
+func ConstantTimeUsernameEqual(a, b string) bool {
+	if len(a) > maxUsernameLength || len(b) > maxUsernameLength {
+		return false
+	}
+
+	lenOK := constantTimeIntEq(len(a), len(b))
+
+	var bufA, bufB [maxUsernameLength]byte
+	copy(bufA[:], a)
+	copy(bufB[:], b)
+
+	cmpOK := subtle.ConstantTimeCompare(bufA[:], bufB[:])
+	return subtle.ConstantTimeSelect(lenOK, cmpOK, 0) == 1
+}
+
+func constantTimeIntEq(x, y int) int {
+	xb := [2]byte{byte(x), byte(x >> 8)}
+	yb := [2]byte{byte(y), byte(y >> 8)}
+	return subtle.ConstantTimeCompare(xb[:], yb[:])
+}
 
 // CheckPassword compares a bcrypt hash against a plaintext password.
 func CheckPassword(hash, password string) bool {

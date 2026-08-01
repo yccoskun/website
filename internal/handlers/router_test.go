@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1089,5 +1090,237 @@ func TestMediaAccessControl(t *testing.T) {
 		if _, err := media.GetByID(uploadedID); !errors.Is(err, services.ErrNotFound) {
 			t.Fatalf("after delete GetByID err = %v, want ErrNotFound", err)
 		}
+	})
+}
+
+func captureLogOutput(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+	return &buf
+}
+
+func assertLogNoSecrets(t *testing.T, logOutput, secret string) {
+	t.Helper()
+	if strings.Contains(logOutput, secret) {
+		t.Fatalf("log must not contain %q; got %q", secret, logOutput)
+	}
+}
+
+func assertLogNoEvent(t *testing.T, logOutput, event string) {
+	t.Helper()
+	if strings.Contains(logOutput, "security event="+event) {
+		t.Fatalf("log must not contain %q event; got %q", event, logOutput)
+	}
+}
+
+func TestSecurityEventLogging(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	t.Run("failed login emits login_failure without password", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"username":"admin","password":"leaked-secret"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "203.0.113.50:12345"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rec.Code)
+		}
+		logOut := buf.String()
+		if !strings.Contains(logOut, "security event=login_failure") {
+			t.Fatalf("log = %q, want login_failure event", logOut)
+		}
+		if !strings.Contains(logOut, "ip=203.0.113.50") {
+			t.Fatalf("log = %q, want ip=203.0.113.50", logOut)
+		}
+		assertLogNoSecrets(t, logOut, "leaked-secret")
+		assertLogNoSecrets(t, logOut, "admin")
+	})
+
+	t.Run("successful login does not emit login_failure", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		logOut := buf.String()
+		if strings.Contains(logOut, "security event=login_failure") {
+			t.Fatalf("successful login must not log login_failure; got %q", logOut)
+		}
+		assertLogNoSecrets(t, logOut, "testpass")
+		sessionToken := sessionCookie(rec)
+		if sessionToken == "" {
+			t.Fatal("expected session cookie")
+		}
+		assertLogNoSecrets(t, logOut, sessionToken)
+	})
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	t.Run("export emits event without dump body", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"password":"testpass"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		req.RemoteAddr = "203.0.113.51:12345"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		logOut := buf.String()
+		if !strings.Contains(logOut, "security event=export") {
+			t.Fatalf("log = %q, want export event", logOut)
+		}
+		assertLogNoSecrets(t, logOut, "testpass")
+		assertLogNoSecrets(t, logOut, cookie)
+		if strings.Contains(logOut, `"settings"`) || strings.Contains(logOut, `"pages"`) {
+			t.Fatalf("log must not contain dump body; got %q", logOut)
+		}
+	})
+
+	t.Run("export wrong password does not emit export event", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"password":"wrong"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		assertLogNoEvent(t, buf.String(), "export")
+	})
+
+	t.Run("import emits event with counts without dump or password", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"settings":{"site_title":"Logged Title"}}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		req.RemoteAddr = "203.0.113.52:12345"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		logOut := buf.String()
+		if !strings.Contains(logOut, "security event=import") {
+			t.Fatalf("log = %q, want import event", logOut)
+		}
+		if !strings.Contains(logOut, "pages_upserted=") || !strings.Contains(logOut, "work_created=") {
+			t.Fatalf("log = %q, want import count fields", logOut)
+		}
+		assertLogNoSecrets(t, logOut, "testpass")
+		assertLogNoSecrets(t, logOut, cookie)
+		assertLogNoSecrets(t, logOut, "Logged Title")
+		assertLogNoSecrets(t, logOut, "site_title")
+	})
+
+	t.Run("import wrong password does not emit import event", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`{"password":"wrong","dump":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		assertLogNoEvent(t, buf.String(), "import")
+	})
+
+	t.Run("import invalid json does not emit import event", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		body := bytes.NewBufferString(`not-json`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		assertLogNoEvent(t, buf.String(), "import")
+	})
+
+	t.Run("media delete emits event with id", func(t *testing.T) {
+		uploads := filepath.Join(t.TempDir(), "uploads-delete")
+		mediaSvc, err := services.NewMediaService(db, uploads)
+		if err != nil {
+			t.Fatalf("media: %v", err)
+		}
+		png := []byte("\x89PNG\r\n\x1a\n")
+		asset, err := mediaSvc.Create("delete-me.png", "image/png", bytes.NewReader(png), int64(len(png)))
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		buf := captureLogOutput(t)
+		req := httptest.NewRequest(http.MethodDelete, "/api/admin/media/"+strconv.FormatInt(asset.ID, 10), nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		req.RemoteAddr = "203.0.113.53:12345"
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("delete status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		logOut := buf.String()
+		wantID := "id=" + strconv.FormatInt(asset.ID, 10)
+		if !strings.Contains(logOut, "security event=media_delete") {
+			t.Fatalf("log = %q, want media_delete event", logOut)
+		}
+		if !strings.Contains(logOut, wantID) {
+			t.Fatalf("log = %q, want %q", logOut, wantID)
+		}
+		assertLogNoSecrets(t, logOut, cookie)
+	})
+
+	t.Run("delete missing media does not emit media_delete event", func(t *testing.T) {
+		buf := captureLogOutput(t)
+		req := httptest.NewRequest(http.MethodDelete, "/api/admin/media/999999", nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("delete status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+		}
+		assertLogNoEvent(t, buf.String(), "media_delete")
 	})
 }

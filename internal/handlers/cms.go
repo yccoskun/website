@@ -2,13 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/yccoskun/website/internal/auth"
+	"github.com/yccoskun/website/internal/middleware"
 	"github.com/yccoskun/website/internal/models"
 	"github.com/yccoskun/website/internal/response"
+	"github.com/yccoskun/website/internal/securitylog"
 	"github.com/yccoskun/website/internal/services"
 )
 
@@ -471,6 +475,7 @@ func (d Deps) AdminDeleteMedia(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
+	securitylog.Event(securitylog.EventMediaDelete, middleware.ClientIP(r), "id", strconv.FormatInt(id, 10))
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -512,6 +517,10 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
+	securitylog.Event(securitylog.EventImport, middleware.ClientIP(r),
+		"pages_upserted", fmt.Sprintf("%d", result.PagesUpserted),
+		"work_created", fmt.Sprintf("%d", result.WorkCreated),
+	)
 	response.JSON(w, http.StatusOK, result)
 }
 
@@ -538,5 +547,6 @@ func (d Deps) AdminExport(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
+	securitylog.Event(securitylog.EventExport, middleware.ClientIP(r))
 	response.JSON(w, http.StatusOK, dump)
 }

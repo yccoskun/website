@@ -1,10 +1,13 @@
 package middleware
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +49,68 @@ func TestLoginRateLimitSameIP(t *testing.T) {
 	if body.Error == nil || *body.Error != "too many login attempts" {
 		t.Fatalf("error = %v, want %q", body.Error, "too many login attempts")
 	}
+}
+
+func TestLoginRateLimitLogsOnlyOn429(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	prevFlags := log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	const wantIP = "203.0.113.10"
+	limiter := NewLoginRateLimiter()
+	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < loginRateLimitMax; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+		req.RemoteAddr = wantIP + ":54321"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d, want 200", i+1, rec.Code)
+		}
+	}
+
+	if rateLimitLogLines(buf.String()) != nil {
+		t.Fatalf("allowed attempts logged rate_limit: %q", buf.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+	req.RemoteAddr = wantIP + ":54322"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+
+	lines := rateLimitLogLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("429 attempt logged %d rate_limit lines, want 1: %q", len(lines), buf.String())
+	}
+	want := "security event=rate_limit ip=" + wantIP
+	if !strings.Contains(lines[0], want) {
+		t.Fatalf("log line = %q, want substring %q", lines[0], want)
+	}
+}
+
+func rateLimitLogLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "security event=rate_limit") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func TestLoginRateLimitDifferentCFConnectingIP(t *testing.T) {
@@ -192,9 +257,9 @@ func TestClientIP(t *testing.T) {
 			if tt.xff != "" {
 				req.Header.Set("X-Forwarded-For", tt.xff)
 			}
-			got := clientIP(req)
+			got := ClientIP(req)
 			if got != tt.want {
-				t.Fatalf("clientIP = %q, want %q", got, tt.want)
+				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
 		})
 	}
