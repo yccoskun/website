@@ -762,7 +762,7 @@ func TestMediaAccessControl(t *testing.T) {
 		Config:   cfg,
 	})
 
-	png := []byte("PNGDATA")
+	png := []byte("\x89PNG\r\n\x1a\n")
 	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
 	if err != nil {
 		t.Fatalf("orphan: %v", err)
@@ -877,6 +877,9 @@ func TestMediaAccessControl(t *testing.T) {
 		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
 			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
 		}
+		if rec.Header().Get("Content-Disposition") != "" {
+			t.Fatalf("Content-Disposition = %q, want empty for images", rec.Header().Get("Content-Disposition"))
+		}
 		if !bytes.Equal(rec.Body.Bytes(), png) {
 			t.Fatalf("body = %q", rec.Body.Bytes())
 		}
@@ -891,6 +894,13 @@ func TestMediaAccessControl(t *testing.T) {
 		cc := rec.Header().Get("Cache-Control")
 		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
 			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
+		}
+		cd := rec.Header().Get("Content-Disposition")
+		if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "cv.pdf") {
+			t.Fatalf("Content-Disposition = %q, want attachment with cv.pdf", cd)
+		}
+		if rec.Header().Get("Content-Type") != "application/pdf" {
+			t.Fatalf("Content-Type = %q, want application/pdf", rec.Header().Get("Content-Type"))
 		}
 	})
 

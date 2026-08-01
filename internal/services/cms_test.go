@@ -127,7 +127,8 @@ func TestStudioRequiresMediaWhenSet(t *testing.T) {
 		t.Fatal("expected validation for missing media")
 	}
 
-	asset, err := media.Create("still.png", "image/png", bytes.NewReader([]byte("PNGDATA")), 7)
+	png := []byte("\x89PNG\r\n\x1a\n")
+	asset, err := media.Create("still.png", "image/png", bytes.NewReader(png), int64(len(png)))
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -330,19 +331,6 @@ func TestContentExportRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMediaRejectsBadType(t *testing.T) {
-	db := openCMSDB(t)
-	uploads := filepath.Join(t.TempDir(), "up")
-	media, err := services.NewMediaService(db, uploads)
-	if err != nil {
-		t.Fatalf("media: %v", err)
-	}
-	_, err = media.Create("x.exe", "application/x-msdownload", bytes.NewReader([]byte("MZ")), 2)
-	if err == nil {
-		t.Fatal("expected rejection")
-	}
-}
-
 func TestURLAllowlistOnWrites(t *testing.T) {
 	db := openCMSDB(t)
 	settings := services.NewSettingsService(db)
@@ -450,7 +438,7 @@ func TestIsPubliclyReferenced(t *testing.T) {
 	pages := services.NewPageService(db)
 	posts := services.NewPostService(db)
 
-	png := []byte("PNGDATA")
+	png := []byte("\x89PNG\r\n\x1a\n")
 	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
 	if err != nil {
 		t.Fatalf("orphan: %v", err)

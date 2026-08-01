@@ -150,6 +150,10 @@ func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", m.Mime)
 	w.Header().Set("Cache-Control", cacheControl)
+	if m.Mime == "application/pdf" {
+		name := services.SanitizeFilename(m.OriginalName)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	}
 	http.ServeContent(w, r, m.OriginalName, stat.ModTime(), f)
 }
 

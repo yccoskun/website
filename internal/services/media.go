@@ -1,11 +1,13 @@
 package services
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -101,7 +103,11 @@ func (s *MediaService) FilePath(m models.MediaAsset) string {
 }
 
 // Create stores a new upload from r and inserts metadata.
+// MIME type is determined by sniffing file bytes (http.DetectContentType), not
+// contentType or the filename extension. contentType is retained for call-site
+// compatibility but ignored for acceptance and storage.
 func (s *MediaService) Create(originalName, contentType string, r io.Reader, size int64) (models.MediaAsset, error) {
+	_ = contentType
 	if size <= 0 {
 		return models.MediaAsset{}, fmt.Errorf("%w: empty file", ErrValidation)
 	}
@@ -109,12 +115,19 @@ func (s *MediaService) Create(originalName, contentType string, r io.Reader, siz
 		return models.MediaAsset{}, fmt.Errorf("%w: file exceeds 20 MiB limit", ErrValidation)
 	}
 
-	mimeType := normalizeMime(contentType, originalName)
+	peek := make([]byte, 512)
+	n, err := io.ReadFull(r, peek)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return models.MediaAsset{}, fmt.Errorf("read upload: %w", err)
+	}
+	peek = peek[:n]
+	mimeType := strings.ToLower(strings.Split(http.DetectContentType(peek), ";")[0])
 	if _, ok := allowedUploadMimes[mimeType]; !ok {
 		return models.MediaAsset{}, fmt.Errorf("%w: unsupported media type %q", ErrValidation, mimeType)
 	}
+	r = io.MultiReader(bytes.NewReader(peek), r)
 
-	safe := sanitizeFilename(originalName)
+	safe := SanitizeFilename(originalName)
 	ext := filepath.Ext(safe)
 	if ext == "" {
 		if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
@@ -235,31 +248,9 @@ func (s *MediaService) IsPubliclyReferenced(id int64) (bool, error) {
 	return true, nil
 }
 
-func normalizeMime(contentType, filename string) string {
-	ct := strings.TrimSpace(strings.Split(contentType, ";")[0])
-	if ct != "" && ct != "application/octet-stream" {
-		return strings.ToLower(ct)
-	}
-	ext := strings.ToLower(filepath.Ext(filename))
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".pdf":
-		return "application/pdf"
-	}
-	if byExt := mime.TypeByExtension(ext); byExt != "" {
-		return strings.ToLower(strings.Split(byExt, ";")[0])
-	}
-	return ct
-}
-
-func sanitizeFilename(name string) string {
+// SanitizeFilename returns a filesystem-safe base name for uploads and
+// Content-Disposition headers.
+func SanitizeFilename(name string) string {
 	base := filepath.Base(name)
 	base = strings.ReplaceAll(base, " ", "-")
 	var b strings.Builder
