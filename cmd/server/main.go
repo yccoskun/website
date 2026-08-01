@@ -19,6 +19,18 @@ import (
 func main() {
 	cfg := config.Load()
 
+	staticDir, err := static.ResolveOverride(cfg.StaticDir, cfg.AllowStaticDir)
+	if err != nil {
+		log.Fatalf("static dir: %v", err)
+	}
+	spa, err := static.Handler(staticDir)
+	if err != nil {
+		log.Fatalf("static handler: %v", err)
+	}
+	if staticDir != "" {
+		log.Printf("serving static files from %s", staticDir)
+	}
+
 	db, err := database.Open(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
@@ -55,7 +67,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           handlers.NewRouter(static.Handler(cfg.StaticDir), deps),
+		Handler:           handlers.NewRouter(spa, deps),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,

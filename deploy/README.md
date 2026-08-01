@@ -136,6 +136,21 @@ ADMIN_PASSWORD_HASH=$2a$12$...   # generate with: go run ./cmd/hashpw
 `SITE_URL` (default `https://www.yusufcancoskun.com`) all have correct defaults
 for this server and can be omitted.
 
+Production always serves the **embedded** frontend build (compiled into the
+binary from `internal/static/dist`). Do **not** set `STATIC_DIR` or
+`ALLOW_STATIC_DIR` in `/etc/website.env` — leaving them unset is what makes
+the server use the embedded build. `STATIC_DIR` is a dev-only override, gated
+by `ALLOW_STATIC_DIR`, and the resolved directory must be a subdirectory of
+the process working directory (`WorkingDirectory=/opt/website` on this
+server) — not the working directory itself — or the server refuses to start.
+Disk serving also uses a rooted filesystem open so nested symlinks cannot
+escape that tree. For local development, after `bun run build` in `web/`,
+run the server from the repo root with:
+
+```bash
+ALLOW_STATIC_DIR=1 STATIC_DIR=web/dist go run ./cmd/server
+```
+
 The live unit needs one added line to pick this file up (already present in
 this repo's reference copy):
 

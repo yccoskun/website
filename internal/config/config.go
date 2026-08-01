@@ -15,8 +15,13 @@ type Config struct {
 	// UploadsDir is where admin media uploads are stored on disk.
 	UploadsDir string
 	// StaticDir, when non-empty, serves the frontend from this directory
-	// on disk instead of the embedded build (useful in development).
+	// on disk instead of the embedded build. Dev-only: ignored unless
+	// AllowStaticDir is also set, and must resolve to a subdirectory of
+	// the process cwd (not the cwd itself).
 	StaticDir string
+	// AllowStaticDir opts in to honoring StaticDir. Production should leave
+	// this unset so the server always serves the embedded frontend build.
+	AllowStaticDir bool
 	// SiteURL is the canonical public origin (no trailing slash), used in
 	// robots.txt, sitemap, and RSS links.
 	SiteURL string
@@ -33,6 +38,7 @@ func Load() Config {
 		DBPath:            envOr("DB_PATH", "data/website.db"),
 		UploadsDir:        envOr("UPLOADS_DIR", "data/uploads"),
 		StaticDir:         os.Getenv("STATIC_DIR"),
+		AllowStaticDir:    envBool("ALLOW_STATIC_DIR"),
 		SiteURL:           strings.TrimRight(envOr("SITE_URL", "https://www.yusufcancoskun.com"), "/"),
 		AdminUsername:     os.Getenv("ADMIN_USERNAME"),
 		AdminPasswordHash: os.Getenv("ADMIN_PASSWORD_HASH"),
@@ -44,4 +50,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBool reports whether the named environment variable is set to a truthy
+// value ("1", "true", or "yes", case-insensitive).
+func envBool(key string) bool {
+	switch strings.ToLower(os.Getenv(key)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
