@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/models"
 	"github.com/yccoskun/website/internal/response"
 	"github.com/yccoskun/website/internal/services"
@@ -94,36 +95,69 @@ func (d Deps) ListStudio(w http.ResponseWriter, _ *http.Request) {
 }
 
 // ServeMedia serves GET /media/{id}.
+// Public assets (published studio, resume PDF, published post refs) are cacheable.
+// Protected assets require a valid admin session; anonymous callers get 404.
 func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
-		http.NotFound(w, r)
+		mediaNotFound(w, r)
 		return
 	}
 	if d.Media == nil {
-		http.NotFound(w, r)
+		mediaNotFound(w, r)
 		return
 	}
 	m, err := d.Media.GetByID(id)
 	if err != nil {
-		http.NotFound(w, r)
+		mediaNotFound(w, r)
 		return
 	}
+
+	public, err := d.Media.IsPubliclyReferenced(id)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	cacheControl := "public, max-age=300, must-revalidate"
+	if !public {
+		if d.Sessions == nil {
+			mediaNotFound(w, r)
+			return
+		}
+		ok, err := d.Sessions.Validate(auth.SessionToken(r))
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if !ok {
+			mediaNotFound(w, r)
+			return
+		}
+		cacheControl = "private, no-store"
+	}
+
 	path := d.Media.FilePath(m)
 	f, err := os.Open(path)
 	if err != nil {
-		http.NotFound(w, r)
+		mediaNotFound(w, r)
 		return
 	}
 	defer func() { _ = f.Close() }()
 	stat, err := f.Stat()
 	if err != nil {
-		http.NotFound(w, r)
+		mediaNotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", m.Mime)
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Cache-Control", cacheControl)
 	http.ServeContent(w, r, m.OriginalName, stat.ModTime(), f)
+}
+
+// mediaNotFound returns 404 with a non-cacheable Cache-Control so intermediaries
+// do not retain a negative response that would outlive a later publish.
+func mediaNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.NotFound(w, r)
 }
 
 // AdminGetSettings serves GET /api/admin/settings.

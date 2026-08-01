@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -199,6 +200,39 @@ func (s *MediaService) URLForID(id *int64) string {
 		return ""
 	}
 	return fmt.Sprintf("/media/%d", *id)
+}
+
+// IsPubliclyReferenced reports whether media id is safe to serve anonymously:
+// a published studio piece image, the resume PDF, or a digit-bounded /media/{id}
+// reference in a published post's content_md or content_html.
+func (s *MediaService) IsPubliclyReferenced(id int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	idStr := strconv.FormatInt(id, 10)
+	var n int
+	err := s.db.QueryRow(`
+		SELECT 1 WHERE EXISTS (
+			SELECT 1 FROM studio_pieces WHERE image_media_id = ? AND published = 1
+		) OR EXISTS (
+			SELECT 1 FROM pages
+			WHERE slug = 'resume' AND json_extract(body_json, '$.pdf_media_id') = ?
+		) OR EXISTS (
+			SELECT 1 FROM posts WHERE published = 1 AND (
+				content_md GLOB ('*/media/' || ? || '[^0-9]*')
+				OR content_md GLOB ('*/media/' || ?)
+				OR content_html GLOB ('*/media/' || ? || '[^0-9]*')
+				OR content_html GLOB ('*/media/' || ?)
+			)
+		)`, id, id, idStr, idStr, idStr, idStr,
+	).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("is publicly referenced: %w", err)
+	}
+	return true, nil
 }
 
 func normalizeMime(contentType, filename string) string {

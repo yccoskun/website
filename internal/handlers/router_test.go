@@ -3,9 +3,12 @@ package handlers
 import (
 	"bytes"
 	"database/sql"
+	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -664,4 +667,255 @@ func sessionCookie(rec *httptest.ResponseRecorder) string {
 		}
 	}
 	return ""
+}
+
+func TestMediaAccessControl(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	uploads := filepath.Join(t.TempDir(), "uploads")
+	media, err := services.NewMediaService(db, uploads)
+	if err != nil {
+		t.Fatalf("media: %v", err)
+	}
+	pages := services.NewPageService(db)
+	studio := services.NewStudioService(db)
+	posts := services.NewPostService(db)
+	spa := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := NewRouter(spa, Deps{
+		Posts:    posts,
+		Resume:   services.NewResumeService(db).WithPages(pages, media),
+		Sessions: services.NewSessionService(db),
+		Settings: services.NewSettingsService(db),
+		Pages:    pages,
+		Work:     services.NewWorkService(db),
+		Studio:   studio,
+		Media:    media,
+		Config:   cfg,
+	})
+
+	png := []byte("PNGDATA")
+	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("orphan: %v", err)
+	}
+	draftAsset, err := media.Create("draft.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("draft asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "draft-still", Title: "Draft", ImageMediaID: &draftAsset.ID, Published: false,
+	})
+	if err != nil {
+		t.Fatalf("draft studio: %v", err)
+	}
+	pubAsset, err := media.Create("pub.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("pub asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "pub-still", Title: "Pub", ImageMediaID: &pubAsset.ID, Published: true,
+	})
+	if err != nil {
+		t.Fatalf("pub studio: %v", err)
+	}
+	pdf := []byte("%PDF-1.4 resume")
+	resumePDF, err := media.Create("cv.pdf", "application/pdf", bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		t.Fatalf("resume pdf: %v", err)
+	}
+	_, err = pages.Upsert("resume", services.PageInput{
+		Title: "Resume",
+		BodyJSON: `{"eyebrow":"CV","headline":"Resume","blurb":"Hi","pdf_media_id":` +
+			strconv.FormatInt(resumePDF.ID, 10) + `}`,
+	})
+	if err != nil {
+		t.Fatalf("resume page: %v", err)
+	}
+
+	postAsset, err := media.Create("post.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("post asset: %v", err)
+	}
+	_, err = posts.Create(services.PostInput{
+		Slug: "pub-media-post", Title: "Pub Media", Summary: "s",
+		ContentMD: "![x](/media/" + strconv.FormatInt(postAsset.ID, 10) + ")",
+		Published: true,
+	})
+	if err != nil {
+		t.Fatalf("published post: %v", err)
+	}
+	draftPostAsset, err := media.Create("draft-post.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("draft post asset: %v", err)
+	}
+	_, err = posts.Create(services.PostInput{
+		Slug: "draft-media-post", Title: "Draft Media", Summary: "s",
+		ContentMD: "![x](/media/" + strconv.FormatInt(draftPostAsset.ID, 10) + ")",
+		Published: false,
+	})
+	if err != nil {
+		t.Fatalf("draft post: %v", err)
+	}
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	assertAnonMediaDenied := func(t *testing.T, id int64) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(id, 10), nil))
+		if rec.Code == http.StatusUnauthorized {
+			t.Fatal("must not leak existence via 401")
+		}
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (not 401)", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "no-store") {
+			t.Fatalf("Cache-Control = %q, want no-store on denial 404", cc)
+		}
+	}
+
+	t.Run("anonymous orphan 404", func(t *testing.T) {
+		assertAnonMediaDenied(t, orphan.ID)
+	})
+
+	t.Run("anonymous draft studio 404", func(t *testing.T) {
+		assertAnonMediaDenied(t, draftAsset.ID)
+	})
+
+	t.Run("anonymous draft post ref 404", func(t *testing.T) {
+		assertAnonMediaDenied(t, draftPostAsset.ID)
+	})
+
+	t.Run("anonymous published studio 200 public cache", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(pubAsset.ID, 10), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
+			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), png) {
+			t.Fatalf("body = %q", rec.Body.Bytes())
+		}
+	})
+
+	t.Run("anonymous resume pdf 200 public cache", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(resumePDF.ID, 10), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
+			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
+		}
+	})
+
+	t.Run("anonymous published post ref 200 public cache", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(postAsset.ID, 10), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
+			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
+		}
+	})
+
+	t.Run("admin session draft media 200 private", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(draftAsset.ID, 10), nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "private") || !strings.Contains(cc, "no-store") {
+			t.Fatalf("Cache-Control = %q, want private, no-store", cc)
+		}
+	})
+
+	t.Run("admin list upload delete", func(t *testing.T) {
+		listReq := httptest.NewRequest(http.MethodGet, "/api/admin/media", nil)
+		listReq.Header.Set("Cookie", "session="+cookie)
+		listRec := httptest.NewRecorder()
+		router.ServeHTTP(listRec, listReq)
+		if listRec.Code != http.StatusOK {
+			t.Fatalf("list status = %d body=%s", listRec.Code, listRec.Body.String())
+		}
+		if !strings.Contains(listRec.Body.String(), "orphan.png") {
+			t.Fatalf("list missing orphan: %s", listRec.Body.String())
+		}
+
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		part, err := mw.CreateFormFile("file", "upload.png")
+		if err != nil {
+			t.Fatalf("form file: %v", err)
+		}
+		if _, err := part.Write(png); err != nil {
+			t.Fatalf("write part: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close multipart: %v", err)
+		}
+		upReq := httptest.NewRequest(http.MethodPost, "/api/admin/media", &buf)
+		upReq.Header.Set("Content-Type", mw.FormDataContentType())
+		upReq.Header.Set("Cookie", "session="+cookie)
+		upRec := httptest.NewRecorder()
+		router.ServeHTTP(upRec, upReq)
+		if upRec.Code != http.StatusCreated {
+			t.Fatalf("upload status = %d body=%s", upRec.Code, upRec.Body.String())
+		}
+		uploadedID := int64(0)
+		items, err := media.List()
+		if err != nil {
+			t.Fatalf("list after upload: %v", err)
+		}
+		for _, item := range items {
+			if item.OriginalName == "upload.png" {
+				uploadedID = item.ID
+				break
+			}
+		}
+		if uploadedID == 0 {
+			t.Fatal("uploaded asset not found")
+		}
+
+		delReq := httptest.NewRequest(http.MethodDelete, "/api/admin/media/"+strconv.FormatInt(uploadedID, 10), nil)
+		delReq.Header.Set("Cookie", "session="+cookie)
+		delRec := httptest.NewRecorder()
+		router.ServeHTTP(delRec, delReq)
+		if delRec.Code != http.StatusOK {
+			t.Fatalf("delete status = %d body=%s", delRec.Code, delRec.Body.String())
+		}
+		if _, err := media.GetByID(uploadedID); !errors.Is(err, services.ErrNotFound) {
+			t.Fatalf("after delete GetByID err = %v, want ErrNotFound", err)
+		}
+	})
 }

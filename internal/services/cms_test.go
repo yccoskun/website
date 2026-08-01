@@ -341,3 +341,133 @@ func TestMediaRejectsBadType(t *testing.T) {
 		t.Fatal("expected rejection")
 	}
 }
+
+func TestIsPubliclyReferenced(t *testing.T) {
+	db := openCMSDB(t)
+	uploads := filepath.Join(t.TempDir(), "up")
+	media, err := services.NewMediaService(db, uploads)
+	if err != nil {
+		t.Fatalf("media: %v", err)
+	}
+	studio := services.NewStudioService(db)
+	pages := services.NewPageService(db)
+	posts := services.NewPostService(db)
+
+	png := []byte("PNGDATA")
+	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("orphan: %v", err)
+	}
+	ok, err := media.IsPubliclyReferenced(orphan.ID)
+	if err != nil || ok {
+		t.Fatalf("orphan public = %v, err=%v, want false", ok, err)
+	}
+
+	draftAsset, err := media.Create("draft.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("draft asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "draft-piece", Title: "Draft", ImageMediaID: &draftAsset.ID, Published: false,
+	})
+	if err != nil {
+		t.Fatalf("draft studio: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(draftAsset.ID)
+	if err != nil || ok {
+		t.Fatalf("unpublished studio public = %v, err=%v, want false", ok, err)
+	}
+
+	pubAsset, err := media.Create("pub.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("pub asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "pub-piece", Title: "Pub", ImageMediaID: &pubAsset.ID, Published: true,
+	})
+	if err != nil {
+		t.Fatalf("pub studio: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(pubAsset.ID)
+	if err != nil || !ok {
+		t.Fatalf("published studio public = %v, err=%v, want true", ok, err)
+	}
+
+	pdf := []byte("%PDF-1.4")
+	resumePDF, err := media.Create("cv.pdf", "application/pdf", bytes.NewReader(pdf), int64(len(pdf)))
+	if err != nil {
+		t.Fatalf("resume pdf: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"eyebrow": "CV", "headline": "Resume", "blurb": "Hi", "pdf_media_id": resumePDF.ID,
+	})
+	if err != nil {
+		t.Fatalf("marshal resume: %v", err)
+	}
+	_, err = pages.Upsert("resume", services.PageInput{
+		Title: "Resume", BodyJSON: string(body),
+	})
+	if err != nil {
+		t.Fatalf("upsert resume: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(resumePDF.ID)
+	if err != nil || !ok {
+		t.Fatalf("resume pdf public = %v, err=%v, want true", ok, err)
+	}
+
+	// Digit-bounded: /media/10 must not make id=1 public.
+	_, err = posts.Create(services.PostInput{
+		Slug: "with-media", Title: "With Media", Summary: "s",
+		ContentMD: "See ![x](/media/10) trailing",
+		Published: true,
+	})
+	if err != nil {
+		t.Fatalf("published post: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(10)
+	if err != nil || !ok {
+		t.Fatalf("post-ref id=10 public = %v, err=%v, want true", ok, err)
+	}
+	ok, err = media.IsPubliclyReferenced(1)
+	if err != nil || ok {
+		t.Fatalf("post-ref id=1 via /media/10 = %v, err=%v, want false", ok, err)
+	}
+
+	_, err = posts.Create(services.PostInput{
+		Slug: "draft-ref", Title: "Draft Ref", Summary: "s",
+		ContentMD: "![d](/media/" + strconv.FormatInt(orphan.ID, 10) + ")",
+		Published: false,
+	})
+	if err != nil {
+		t.Fatalf("draft post: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(orphan.ID)
+	if err != nil || ok {
+		t.Fatalf("draft post ref public = %v, err=%v, want false", ok, err)
+	}
+
+	htmlOnly, err := media.Create("html-only.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("html-only asset: %v", err)
+	}
+	htmlPost, err := posts.Create(services.PostInput{
+		Slug: "html-only-ref", Title: "HTML Only", Summary: "s",
+		ContentMD: "no media here",
+		Published: true,
+	})
+	if err != nil {
+		t.Fatalf("html-only post: %v", err)
+	}
+	_, err = db.Exec(
+		`UPDATE posts SET content_html = ? WHERE id = ?`,
+		`<p><img src="/media/`+strconv.FormatInt(htmlOnly.ID, 10)+`"></p>`,
+		htmlPost.ID,
+	)
+	if err != nil {
+		t.Fatalf("set content_html: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(htmlOnly.ID)
+	if err != nil || !ok {
+		t.Fatalf("content_html-only public = %v, err=%v, want true", ok, err)
+	}
+}

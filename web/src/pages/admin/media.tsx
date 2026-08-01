@@ -125,7 +125,8 @@ export function AdminMediaPage() {
       <div>
         <h1 className="font-display text-2xl font-semibold">Media</h1>
         <p className="mt-1 font-mono text-xs text-ink-600 dark:text-ink-400">
-          Upload PDF / images. Public URL: /media/&#123;id&#125;
+          Upload PDF / images. Media URL: /media/&#123;id&#125;. Unpublished or orphan
+          files require an admin session.
         </p>
         <label className="mt-4 inline-block">
           <span className="rounded-chip border border-ink-900 bg-ink-900 px-3 py-1.5 font-mono text-xs tracking-[0.14em] text-paper uppercase dark:border-paper dark:bg-paper dark:text-ink-950">
