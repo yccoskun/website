@@ -658,8 +658,8 @@ func TestAdminExportCSRF(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 
-	t.Run("POST export with session", func(t *testing.T) {
-		body := bytes.NewBufferString(`{}`)
+	t.Run("POST export with session and password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Cookie", "session="+cookie)
@@ -673,6 +673,78 @@ func TestAdminExportCSRF(t *testing.T) {
 			if !strings.Contains(out, key) {
 				t.Fatalf("export body missing %s: %s", key, out)
 			}
+		}
+	})
+
+	t.Run("POST export missing password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "password confirmation required") {
+			t.Fatalf("body = %s, want password confirmation required", rec.Body.String())
+		}
+	})
+
+	t.Run("POST export wrong password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"wrong"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "invalid password") {
+			t.Fatalf("body = %s, want invalid password", rec.Body.String())
+		}
+	})
+
+	t.Run("POST import missing password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"dump":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "password confirmation required") {
+			t.Fatalf("body = %s, want password confirmation required", rec.Body.String())
+		}
+	})
+
+	t.Run("POST import wrong password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"wrong","dump":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "invalid password") {
+			t.Fatalf("body = %s, want invalid password", rec.Body.String())
+		}
+	})
+
+	t.Run("POST import with session and password", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"settings":{}}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 		}
 	})
 
@@ -690,7 +762,7 @@ func TestAdminExportCSRF(t *testing.T) {
 	})
 
 	t.Run("POST export without session", func(t *testing.T) {
-		body := bytes.NewBufferString(`{}`)
+		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
@@ -701,7 +773,7 @@ func TestAdminExportCSRF(t *testing.T) {
 	})
 
 	t.Run("cross-site Sec-Fetch-Site forbidden", func(t *testing.T) {
-		body := bytes.NewBufferString(`{}`)
+		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Cookie", "session="+cookie)
@@ -710,6 +782,36 @@ func TestAdminExportCSRF(t *testing.T) {
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("after logout export and import unauthorized", func(t *testing.T) {
+		logoutReq := httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil)
+		logoutReq.Header.Set("Cookie", "session="+cookie)
+		logoutRec := httptest.NewRecorder()
+		router.ServeHTTP(logoutRec, logoutReq)
+		if logoutRec.Code != http.StatusOK {
+			t.Fatalf("logout status = %d", logoutRec.Code)
+		}
+
+		exportBody := bytes.NewBufferString(`{"password":"testpass"}`)
+		exportReq := httptest.NewRequest(http.MethodPost, "/api/admin/export", exportBody)
+		exportReq.Header.Set("Content-Type", "application/json")
+		exportReq.Header.Set("Cookie", "session="+cookie)
+		exportRec := httptest.NewRecorder()
+		router.ServeHTTP(exportRec, exportReq)
+		if exportRec.Code != http.StatusUnauthorized {
+			t.Fatalf("export after logout status = %d, want 401; body = %s", exportRec.Code, exportRec.Body.String())
+		}
+
+		importBody := bytes.NewBufferString(`{"password":"testpass","dump":{}}`)
+		importReq := httptest.NewRequest(http.MethodPost, "/api/admin/import", importBody)
+		importReq.Header.Set("Content-Type", "application/json")
+		importReq.Header.Set("Cookie", "session="+cookie)
+		importRec := httptest.NewRecorder()
+		router.ServeHTTP(importRec, importReq)
+		if importRec.Code != http.StatusUnauthorized {
+			t.Fatalf("import after logout status = %d, want 401; body = %s", importRec.Code, importRec.Body.String())
 		}
 	})
 }

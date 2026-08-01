@@ -38,7 +38,7 @@ export function LoginPage() {
             Sign in to edit.
           </h1>
           <p className="mt-2 text-sm text-ink-600 dark:text-ink-400">
-            Session cookie only — no tokens in the browser.
+            Session cookie only — lasts 24 hours, then you sign in again.
           </p>
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>

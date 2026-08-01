@@ -19,6 +19,7 @@ export function AdminMediaPage() {
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   useDocumentMeta("Admin · Media", "Upload and manage media assets.");
 
@@ -69,19 +70,27 @@ export function AdminMediaPage() {
   }
 
   function onImport() {
+    if (!confirmPassword) {
+      setImportMsg("password confirmation required");
+      return;
+    }
     setImporting(true);
     setImportMsg(null);
-    let payload: unknown;
+    let dump: unknown;
     try {
-      payload = JSON.parse(importText) as unknown;
+      dump = JSON.parse(importText) as unknown;
     } catch {
       setImportMsg("Invalid JSON");
       setImporting(false);
       return;
     }
-    void apiPost<ImportResult>("/api/admin/import", payload)
+    void apiPost<ImportResult>("/api/admin/import", {
+      password: confirmPassword,
+      dump,
+    })
       .then((result) => {
         setImporting(false);
+        setConfirmPassword("");
         setImportMsg(
           `Imported: settings ${result.settings_upserted}, pages ${result.pages_upserted}, work ${result.work_created}, studio ${result.studio_created}, sections ${result.sections_created}, entries ${result.entries_created}`,
         );
@@ -94,9 +103,15 @@ export function AdminMediaPage() {
   }
 
   function onExport() {
+    if (!confirmPassword) {
+      setExportMsg("password confirmation required");
+      return;
+    }
     setExporting(true);
     setExportMsg(null);
-    void apiPost<Record<string, unknown>>("/api/admin/export", {})
+    void apiPost<Record<string, unknown>>("/api/admin/export", {
+      password: confirmPassword,
+    })
       .then((dump) => {
         const text = JSON.stringify(dump, null, 2);
         const blob = new Blob([text], { type: "application/json" });
@@ -109,6 +124,7 @@ export function AdminMediaPage() {
         URL.revokeObjectURL(url);
         setImportText(text);
         setExporting(false);
+        setConfirmPassword("");
         setExportMsg("Downloaded JSON dump. Media files are not included — upload those separately on the target host.");
       })
       .catch((err: unknown) => {
@@ -184,12 +200,26 @@ export function AdminMediaPage() {
           Media binaries are not included — upload PDF/stills separately and remapping{" "}
           <code className="text-ink-700 dark:text-ink-300">pdf_media_id</code> /{" "}
           <code className="text-ink-700 dark:text-ink-300">image_media_id</code> if needed.
+          Confirm with your admin password before export or import.
         </p>
+        <label className="mt-3 block max-w-sm">
+          <span className="font-mono text-[0.65rem] tracking-[0.18em] text-ink-600 uppercase dark:text-ink-400">
+            Confirm password
+          </span>
+          <input
+            type="password"
+            name="confirm-password"
+            autoComplete="current-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            className="mt-1.5 w-full rounded-chip border border-ink-200 bg-paper px-2.5 py-1.5 font-mono text-sm text-ink-900 outline-none focus:border-ember-600 dark:border-ink-800 dark:bg-ink-950 dark:text-ink-200 dark:focus:border-ember-400"
+          />
+        </label>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={onExport}
-            disabled={exporting}
+            disabled={exporting || !confirmPassword}
             className="rounded-chip border border-ink-900 bg-ink-900 px-3 py-1.5 font-mono text-xs tracking-[0.14em] text-paper uppercase transition-transform active:translate-y-0.5 disabled:opacity-50 dark:border-paper dark:bg-paper dark:text-ink-950"
           >
             {exporting ? "Exporting…" : "Export JSON"}
@@ -197,7 +227,7 @@ export function AdminMediaPage() {
           <button
             type="button"
             onClick={onImport}
-            disabled={importing || !importText.trim()}
+            disabled={importing || !importText.trim() || !confirmPassword}
             className="rounded-chip border border-ink-200 px-3 py-1.5 font-mono text-xs tracking-[0.14em] text-ink-700 uppercase transition-transform active:translate-y-0.5 disabled:opacity-50 dark:border-ink-800 dark:text-ink-300"
           >
             {importing ? "Importing…" : "Import"}

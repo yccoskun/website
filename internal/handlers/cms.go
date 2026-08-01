@@ -474,7 +474,17 @@ func (d Deps) AdminDeleteMedia(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+type exportRequest struct {
+	Password string `json:"password"`
+}
+
+type importRequest struct {
+	Password string                 `json:"password"`
+	Dump     services.ContentImport `json:"dump"`
+}
+
 // AdminImport serves POST /api/admin/import.
+// Body: { "password": "...", "dump": <ContentImport> }. Requires password step-up.
 func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	raw, err := io.ReadAll(r.Body)
@@ -482,9 +492,12 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	var dump services.ContentImport
-	if err := json.Unmarshal(raw, &dump); err != nil {
+	var body importRequest
+	if err := json.Unmarshal(raw, &body); err != nil {
 		response.Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !d.confirmAdminPassword(w, body.Password) {
 		return
 	}
 	importer := &services.ImportService{
@@ -494,7 +507,7 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		Studio:   d.Studio,
 		Resume:   d.Resume,
 	}
-	result, err := importer.Apply(dump)
+	result, err := importer.Apply(body.Dump)
 	if err != nil {
 		mapServiceError(w, err)
 		return
@@ -503,7 +516,16 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 }
 
 // AdminExport serves POST /api/admin/export — full content dump for transfer/import.
-func (d Deps) AdminExport(w http.ResponseWriter, _ *http.Request) {
+// Body: { "password": "..." }. Requires password step-up.
+func (d Deps) AdminExport(w http.ResponseWriter, r *http.Request) {
+	var body exportRequest
+	if err := decodeJSON(w, r, &body); err != nil {
+		response.Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !d.confirmAdminPassword(w, body.Password) {
+		return
+	}
 	exporter := &services.ImportService{
 		Settings: d.Settings,
 		Pages:    d.Pages,

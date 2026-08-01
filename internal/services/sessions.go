@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// DefaultSessionTTL is how long an admin session stays valid.
-const DefaultSessionTTL = 7 * 24 * time.Hour
+// DefaultSessionTTL is the absolute lifetime of an admin session (no idle refresh).
+const DefaultSessionTTL = 24 * time.Hour
 
 // SessionService manages admin session tokens.
 type SessionService struct {
@@ -21,7 +21,13 @@ type SessionService struct {
 
 // NewSessionService constructs a SessionService with DefaultSessionTTL.
 func NewSessionService(db *sql.DB) *SessionService {
-	return &SessionService{db: db, ttl: DefaultSessionTTL}
+	return NewSessionServiceWithTTL(db, DefaultSessionTTL)
+}
+
+// NewSessionServiceWithTTL constructs a SessionService with a custom absolute TTL.
+// Useful in tests (short or already-expired TTLs).
+func NewSessionServiceWithTTL(db *sql.DB, ttl time.Duration) *SessionService {
+	return &SessionService{db: db, ttl: ttl}
 }
 
 func hashToken(raw string) string {

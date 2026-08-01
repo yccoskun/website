@@ -117,6 +117,28 @@ func (d Deps) GetResume(w http.ResponseWriter, _ *http.Request) {
 // the username does not match, so login always pays a password-check cost.
 const dummyPasswordHash = "$2a$12$cjmQmxqZD1IJVx6h08hAx.eEAOuIKCSlLuSDe9EtC32yIzVjSl3/."
 
+// confirmAdminPassword verifies the admin password for sensitive step-up actions.
+// Missing/empty password → 403 "password confirmation required" (short-circuits like
+// auth.CheckPassword). Non-empty wrong/unset credentials → 403 "invalid password"
+// after a bcrypt compare (dummy hash when unset) for timing parity with login.
+// Returns false after writing the error response.
+func (d Deps) confirmAdminPassword(w http.ResponseWriter, password string) bool {
+	if password == "" {
+		response.Error(w, http.StatusForbidden, "password confirmation required")
+		return false
+	}
+	hash := dummyPasswordHash
+	if d.Config.AdminPasswordHash != "" {
+		hash = d.Config.AdminPasswordHash
+	}
+	passOK := auth.CheckPassword(hash, password)
+	if d.Config.AdminPasswordHash == "" || !passOK {
+		response.Error(w, http.StatusForbidden, "invalid password")
+		return false
+	}
+	return true
+}
+
 // AdminLogin serves POST /api/admin/login.
 func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest
