@@ -4,8 +4,9 @@ import type { FormEvent } from "react";
 import { ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiGet, apiPut } from "@/lib/api";
 import { useDocumentMeta } from "@/lib/meta";
+import { isValidNavPath } from "@/lib/urls";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
-import type { Page } from "@/types/cms";
+import type { HomeBody, Page } from "@/types/cms";
 
 const SLUGS = ["home", "work", "studio", "notes", "resume", "not_found"] as const;
 
@@ -125,12 +126,27 @@ export function AdminPagesPage() {
     setError(null);
     setSaved(false);
     let bodyJson = body;
+    let parsed: unknown;
     try {
-      bodyJson = JSON.stringify(JSON.parse(body) as unknown);
+      parsed = JSON.parse(body) as unknown;
+      bodyJson = JSON.stringify(parsed);
     } catch {
       setError("body_json must be valid JSON");
       setSaving(false);
       return;
+    }
+    if (slug === "home") {
+      const home = parsed as HomeBody;
+      const domains = home.domains ?? [];
+      for (let i = 0; i < domains.length; i++) {
+        const link = domains[i]?.link;
+        if (!link) continue;
+        if (!isValidNavPath(link.to ?? "")) {
+          setError(`domains[${i}].link.to must be a relative path starting with /`);
+          setSaving(false);
+          return;
+        }
+      }
     }
     void apiPut<Page>(`/api/admin/pages/${slug}`, {
       title,

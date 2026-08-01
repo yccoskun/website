@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { AccordionItem } from "@/components/accordion";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { useDocumentMeta } from "@/lib/meta";
+import { isValidEmail, safeHref, safePath } from "@/lib/urls";
 import { useApi } from "@/lib/use-api";
 import type { Contact, HomeBody, HomeDomain, Page, PublicSettings } from "@/types/cms";
 
@@ -29,13 +30,16 @@ function parseHomeBody(raw: string): HomeBody {
 }
 
 function DomainBody({ domain }: { domain: HomeDomain }) {
+  const to = domain.link ? safePath(domain.link.to) : undefined;
   return (
     <>
       <p className="text-base leading-relaxed text-ink-600 dark:text-ink-300">{domain.blurb}</p>
-      {domain.link ? (
-        <Link to={domain.link.to} className={quietLinkClass}>
+      {domain.link && to ? (
+        <Link to={to} className={quietLinkClass}>
           {domain.link.label}
         </Link>
+      ) : domain.link ? (
+        <span className={quietLinkClass}>{domain.link.label}</span>
       ) : null}
     </>
   );
@@ -58,6 +62,9 @@ export function HomePage() {
   }
 
   const contact: Contact = settings.data?.contact ?? { email: "", github: "", linkedin: "" };
+  const github = safeHref(contact.github);
+  const linkedin = safeHref(contact.linkedin);
+  const emailOk = Boolean(contact.email.trim()) && isValidEmail(contact.email);
 
   return (
     <article>
@@ -131,18 +138,18 @@ export function HomePage() {
         <Link to="/work" className={linkClass}>
           Work
         </Link>
-        {contact.github ? (
-          <a href={contact.github} target="_blank" rel="noreferrer" className={linkClass}>
+        {github ? (
+          <a href={github} target="_blank" rel="noreferrer" className={linkClass}>
             GitHub
           </a>
         ) : null}
-        {contact.email ? (
-          <a href={`mailto:${contact.email}`} className={linkClass}>
+        {emailOk ? (
+          <a href={`mailto:${contact.email.trim()}`} className={linkClass}>
             Email
           </a>
         ) : null}
-        {contact.linkedin ? (
-          <a href={contact.linkedin} target="_blank" rel="noreferrer" className={linkClass}>
+        {linkedin ? (
+          <a href={linkedin} target="_blank" rel="noreferrer" className={linkClass}>
             LinkedIn
           </a>
         ) : null}

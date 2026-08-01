@@ -4,7 +4,9 @@ import type { FormEvent } from "react";
 import { ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiGet, apiPut } from "@/lib/api";
 import { useDocumentMeta } from "@/lib/meta";
+import { isValidEmail, isValidHTTPSURL, isValidNavPath } from "@/lib/urls";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
+import type { Contact, NavItem } from "@/types/cms";
 
 const fieldLabel =
   "font-mono text-[0.65rem] tracking-[0.16em] text-ink-600 uppercase dark:text-ink-400";
@@ -33,7 +35,7 @@ const DEFAULTS: Record<(typeof KEYS)[number], string> = {
 
 export function AdminSettingsPage() {
   const { onUnauthorized } = useAdminSession();
-  const [form, setForm] = useState<Record<string, string>>({ ...DEFAULTS });
+  const [form, setForm] = useState<Record<(typeof KEYS)[number], string>>({ ...DEFAULTS });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,50 @@ export function AdminSettingsPage() {
     setSaving(true);
     setSaved(false);
     setError(null);
+
+    try {
+      const nav = JSON.parse(form.nav) as NavItem[];
+      if (!Array.isArray(nav)) {
+        setError("nav must be a JSON array");
+        setSaving(false);
+        return;
+      }
+      for (const item of nav) {
+        if (!isValidNavPath(item.path ?? "")) {
+          setError(`nav path must be a relative path starting with / (got ${JSON.stringify(item.path)})`);
+          setSaving(false);
+          return;
+        }
+      }
+    } catch {
+      setError("nav must be valid JSON");
+      setSaving(false);
+      return;
+    }
+
+    try {
+      const contact = JSON.parse(form.contact) as Contact;
+      if (!isValidEmail(contact.email ?? "")) {
+        setError("contact.email is invalid");
+        setSaving(false);
+        return;
+      }
+      if (!isValidHTTPSURL(contact.github ?? "", true)) {
+        setError("contact.github must be empty or an https:// URL");
+        setSaving(false);
+        return;
+      }
+      if (!isValidHTTPSURL(contact.linkedin ?? "", true)) {
+        setError("contact.linkedin must be empty or an https:// URL");
+        setSaving(false);
+        return;
+      }
+    } catch {
+      setError("contact must be valid JSON");
+      setSaving(false);
+      return;
+    }
+
     void apiPut<Record<string, string>>("/api/admin/settings", { settings: form })
       .then(() => {
         setSaving(false);

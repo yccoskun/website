@@ -590,6 +590,49 @@ func TestCMSPublicAndAdminSettings(t *testing.T) {
 	}
 }
 
+func TestCMSRejectsDangerousURLs(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+
+	workBody := bytes.NewBufferString(`{"name":"demo","href":"javascript:alert(1)","sort_order":1}`)
+	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
+	workReq.Header.Set("Content-Type", "application/json")
+	workReq.Header.Set("Cookie", "session="+cookie)
+	workRec := httptest.NewRecorder()
+	router.ServeHTTP(workRec, workReq)
+	if workRec.Code != http.StatusBadRequest {
+		t.Fatalf("bad work href status = %d body=%s", workRec.Code, workRec.Body.String())
+	}
+
+	navBody := bytes.NewBufferString(`{"settings":{"nav":"[{\"label\":\"X\",\"path\":\"//evil.com\"}]"}}`)
+	navReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings", navBody)
+	navReq.Header.Set("Content-Type", "application/json")
+	navReq.Header.Set("Cookie", "session="+cookie)
+	navRec := httptest.NewRecorder()
+	router.ServeHTTP(navRec, navReq)
+	if navRec.Code != http.StatusBadRequest {
+		t.Fatalf("bad nav status = %d body=%s", navRec.Code, navRec.Body.String())
+	}
+}
+
 func TestAdminExportCSRF(t *testing.T) {
 	db := openTestDB(t)
 	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)

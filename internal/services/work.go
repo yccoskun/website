@@ -71,7 +71,7 @@ func validateWorkInput(in WorkInput) error {
 	if strings.TrimSpace(in.Name) == "" {
 		return fmt.Errorf("%w: name is required", ErrValidation)
 	}
-	return nil
+	return ValidateHTTPSURL(in.Href, true)
 }
 
 // List returns all work items ordered for public display.

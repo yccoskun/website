@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { useDocumentMeta } from "@/lib/meta";
+import { isValidHTTPSURL } from "@/lib/urls";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
 import type { OkResponse } from "@/types/admin";
 import type { WorkItem } from "@/types/cms";
@@ -87,6 +88,11 @@ export function AdminWorkPage() {
     e.preventDefault();
     setSaving(true);
     setFormError(null);
+    if (!isValidHTTPSURL(form.href, true)) {
+      setFormError("href must be empty or an https:// URL");
+      setSaving(false);
+      return;
+    }
     const payload = {
       name: form.name,
       one_liner: form.one_liner,

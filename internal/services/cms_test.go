@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -339,6 +340,102 @@ func TestMediaRejectsBadType(t *testing.T) {
 	_, err = media.Create("x.exe", "application/x-msdownload", bytes.NewReader([]byte("MZ")), 2)
 	if err == nil {
 		t.Fatal("expected rejection")
+	}
+}
+
+func TestURLAllowlistOnWrites(t *testing.T) {
+	db := openCMSDB(t)
+	settings := services.NewSettingsService(db)
+	pages := services.NewPageService(db)
+	work := services.NewWorkService(db)
+	imp := &services.ImportService{
+		Settings: settings,
+		Pages:    pages,
+		Work:     work,
+		Studio:   services.NewStudioService(db),
+		Resume:   services.NewResumeService(db),
+	}
+
+	_, err := work.Create(services.WorkInput{
+		Name: "ok", Href: "https://example.com/x", SortOrder: 1,
+	})
+	if err != nil {
+		t.Fatalf("good href: %v", err)
+	}
+	_, err = work.Create(services.WorkInput{Name: "empty-href", SortOrder: 2})
+	if err != nil {
+		t.Fatalf("empty href: %v", err)
+	}
+	for _, bad := range []string{"javascript:alert(1)", "//evil.com", "data:text/html,x", "vbscript:msg"} {
+		_, err = work.Create(services.WorkInput{Name: "bad", Href: bad})
+		if err == nil || !errors.Is(err, services.ErrValidation) {
+			t.Fatalf("href %q: want ErrValidation, got %v", bad, err)
+		}
+	}
+
+	_, err = settings.Upsert(map[string]string{
+		"nav": `[{"label":"Home","path":"/"},{"label":"Work","path":"/work"}]`,
+	})
+	if err != nil {
+		t.Fatalf("good nav: %v", err)
+	}
+	_, err = settings.Upsert(map[string]string{
+		"nav": `[{"label":"X","path":"//evil.com"}]`,
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("bad nav path: want ErrValidation, got %v", err)
+	}
+	_, err = settings.Upsert(map[string]string{"nav": `not-json`})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("bad nav json: want ErrValidation, got %v", err)
+	}
+
+	_, err = settings.Upsert(map[string]string{
+		"contact": `{"email":"a@b.c","github":"https://github.com/x","linkedin":""}`,
+	})
+	if err != nil {
+		t.Fatalf("good contact: %v", err)
+	}
+	_, err = settings.Upsert(map[string]string{
+		"contact": `{"email":"bad","github":"","linkedin":""}`,
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("bad email: want ErrValidation, got %v", err)
+	}
+	_, err = settings.Upsert(map[string]string{
+		"contact": `{"email":"","github":"javascript:alert(1)","linkedin":""}`,
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("bad github: want ErrValidation, got %v", err)
+	}
+
+	_, err = pages.Upsert("home", services.PageInput{
+		Title: "Home",
+		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"/work","label":"Work"}}],"now":""}`,
+	})
+	if err != nil {
+		t.Fatalf("good home link: %v", err)
+	}
+	_, err = pages.Upsert("home", services.PageInput{
+		Title: "Home",
+		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"javascript:alert(1)","label":"X"}}],"now":""}`,
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("bad domain link: want ErrValidation, got %v", err)
+	}
+	_, err = pages.Upsert("home", services.PageInput{
+		Title: "Home",
+		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"","label":"X"}}],"now":""}`,
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("empty link.to: want ErrValidation, got %v", err)
+	}
+
+	_, err = imp.Apply(services.ContentImport{
+		Work: []services.WorkInput{{Name: "evil", Href: "javascript:alert(1)"}},
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("import bad href: want ErrValidation, got %v", err)
 	}
 }
 

@@ -74,6 +74,9 @@ func (s *SettingsService) Upsert(in map[string]string) (map[string]string, error
 		if key == "" {
 			return nil, fmt.Errorf("%w: setting key is required", ErrValidation)
 		}
+		if err := validateSettingValue(key, v); err != nil {
+			return nil, err
+		}
 		if _, err := stmt.Exec(key, v); err != nil {
 			return nil, fmt.Errorf("upsert setting %q: %w", key, err)
 		}
@@ -116,6 +119,36 @@ func parsePublicSettings(all map[string]string) models.PublicSettings {
 		}
 	}
 	return out
+}
+
+func validateSettingValue(key, value string) error {
+	switch key {
+	case SettingNav:
+		var nav []models.NavItem
+		if err := json.Unmarshal([]byte(value), &nav); err != nil {
+			return fmt.Errorf("%w: nav must be valid JSON", ErrValidation)
+		}
+		for _, item := range nav {
+			if err := ValidateNavPath(item.Path); err != nil {
+				return err
+			}
+		}
+	case SettingContact:
+		var c models.Contact
+		if err := json.Unmarshal([]byte(value), &c); err != nil {
+			return fmt.Errorf("%w: contact must be valid JSON", ErrValidation)
+		}
+		if err := ValidateEmail(c.Email); err != nil {
+			return err
+		}
+		if err := ValidateHTTPSURL(c.GitHub, true); err != nil {
+			return err
+		}
+		if err := ValidateHTTPSURL(c.LinkedIn, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Get returns a single setting value (empty string if missing).

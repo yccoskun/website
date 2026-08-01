@@ -198,6 +198,17 @@ func validatePageBody(slug, body string) error {
 		if err := json.Unmarshal([]byte(body), &b); err != nil {
 			return fmt.Errorf("%w: home body: %v", ErrValidation, err)
 		}
+		for i, d := range b.Domains {
+			if d.Link == nil {
+				continue
+			}
+			if strings.TrimSpace(d.Link.To) == "" {
+				return fmt.Errorf("%w: home domains[%d].link.to is required", ErrValidation, i)
+			}
+			if err := ValidateNavPath(d.Link.To); err != nil {
+				return err
+			}
+		}
 	case PageWork:
 		var b WorkPageBody
 		if err := json.Unmarshal([]byte(body), &b); err != nil {

@@ -1,6 +1,7 @@
 import { AccordionItem } from "@/components/accordion";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { useDocumentMeta } from "@/lib/meta";
+import { safeHref } from "@/lib/urls";
 import { useApi } from "@/lib/use-api";
 import type { Page, WorkItem, WorkPageBody } from "@/types/cms";
 
@@ -42,6 +43,7 @@ function WorkItemSummary({ item }: { item: WorkItem }) {
 }
 
 function WorkItemDetail({ item }: { item: WorkItem }) {
+  const href = safeHref(item.href);
   return (
     <>
       {item.one_liner ? (
@@ -62,8 +64,8 @@ function WorkItemDetail({ item }: { item: WorkItem }) {
           ))}
         </ul>
       ) : null}
-      {item.href ? (
-        <a href={item.href} target="_blank" rel="noreferrer" className={`${linkClass} mt-5`}>
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer" className={`${linkClass} mt-5`}>
           {item.name} on GitHub
         </a>
       ) : null}

@@ -1,6 +1,7 @@
 import { AccordionItem } from "@/components/accordion";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { useDocumentMeta } from "@/lib/meta";
+import { isValidEmail, safeHref } from "@/lib/urls";
 import { useApi } from "@/lib/use-api";
 import type { Contact, PublicSettings } from "@/types/cms";
 import type { Resume, ResumeEntry, ResumeHeader } from "@/types/resume";
@@ -191,6 +192,10 @@ function ResumeHeaderBlock({
     );
   }
 
+  const github = safeHref(contact?.github);
+  const linkedin = safeHref(contact?.linkedin);
+  const emailOk = Boolean(contact?.email?.trim()) && isValidEmail(contact?.email ?? "");
+
   return (
     <>
       {header.eyebrow ? (
@@ -213,18 +218,18 @@ function ResumeHeaderBlock({
             Download PDF
           </a>
         ) : null}
-        {contact?.linkedin ? (
-          <a href={contact.linkedin} target="_blank" rel="noreferrer" className={linkClass}>
+        {linkedin ? (
+          <a href={linkedin} target="_blank" rel="noreferrer" className={linkClass}>
             LinkedIn
           </a>
         ) : null}
-        {contact?.github ? (
-          <a href={contact.github} target="_blank" rel="noreferrer" className={linkClass}>
+        {github ? (
+          <a href={github} target="_blank" rel="noreferrer" className={linkClass}>
             GitHub
           </a>
         ) : null}
-        {contact?.email ? (
-          <a href={`mailto:${contact.email}`} className={linkClass}>
+        {emailOk && contact ? (
+          <a href={`mailto:${contact.email.trim()}`} className={linkClass}>
             Email
           </a>
         ) : null}

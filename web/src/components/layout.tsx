@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { MoonIcon, SunIcon } from "@/components/icons";
 import { useTheme } from "@/components/theme-provider";
+import { safePath } from "@/lib/urls";
 import { useApi } from "@/lib/use-api";
 import type { NavItem, PublicSettings } from "@/types/cms";
 
@@ -50,11 +51,21 @@ function Rail({ settings }: { settings: PublicSettings | null }) {
         aria-label="Primary"
         className="flex min-w-0 flex-1 items-center gap-4 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden md:min-h-0 md:flex-none md:flex-col md:gap-6 md:overflow-visible"
       >
-        {nav.map((item) => (
-          <NavLink key={item.path} to={item.path} className={navLinkClass} end={item.path === "/"}>
-            {item.label}
-          </NavLink>
-        ))}
+        {nav.map((item) => {
+          const path = safePath(item.path);
+          if (!path) {
+            return (
+              <span key={item.path} className={navLinkClass({ isActive: false })}>
+                {item.label}
+              </span>
+            );
+          }
+          return (
+            <NavLink key={path} to={path} className={navLinkClass} end={path === "/"}>
+              {item.label}
+            </NavLink>
+          );
+        })}
       </nav>
       <div className="shrink-0 md:mt-auto">
         <ThemeToggle />
