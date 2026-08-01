@@ -66,6 +66,23 @@ func assertSecurityHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
 			t.Fatalf("%s = %q, want %q", k, got, want)
 		}
 	}
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("Content-Security-Policy header missing")
+	}
+	if !strings.Contains(csp, "script-src 'self'") {
+		t.Fatalf("Content-Security-Policy = %q, want script-src 'self'", csp)
+	}
+	if !strings.Contains(csp, "sha256-") {
+		t.Fatalf("Content-Security-Policy = %q, want sha256- token for theme boot", csp)
+	}
+	if strings.Contains(csp, "unsafe-inline") {
+		t.Fatalf("Content-Security-Policy = %q, must not include unsafe-inline", csp)
+	}
+	if strings.Contains(csp, "unsafe-eval") {
+		t.Fatalf("Content-Security-Policy = %q, must not include unsafe-eval", csp)
+	}
 }
 
 func TestSPAHasSecurityHeaders(t *testing.T) {
