@@ -96,7 +96,7 @@ export function AdminMediaPage() {
   function onExport() {
     setExporting(true);
     setExportMsg(null);
-    void apiGet<Record<string, unknown>>("/api/admin/export")
+    void apiPost<Record<string, unknown>>("/api/admin/export", {})
       .then((dump) => {
         const text = JSON.stringify(dump, null, 2);
         const blob = new Blob([text], { type: "application/json" });

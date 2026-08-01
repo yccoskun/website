@@ -464,7 +464,7 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, result)
 }
 
-// AdminExport serves GET /api/admin/export — full content dump for transfer/import.
+// AdminExport serves POST /api/admin/export — full content dump for transfer/import.
 func (d Deps) AdminExport(w http.ResponseWriter, _ *http.Request) {
 	exporter := &services.ImportService{
 		Settings: d.Settings,

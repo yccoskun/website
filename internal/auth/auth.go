@@ -22,7 +22,8 @@ func CheckPassword(hash, password string) bool {
 }
 
 // SetSessionCookie writes the session cookie on the response.
-// SameSite=Lax is the CSRF posture for this same-origin SPA (no cross-site POSTs).
+// SameSite=Lax blocks cross-site POSTs. Authenticated admin APIs also reject
+// Sec-Fetch-Site: cross-site; sensitive export is POST-only.
 func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,

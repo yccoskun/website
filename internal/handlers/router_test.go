@@ -570,6 +570,87 @@ func TestCMSPublicAndAdminSettings(t *testing.T) {
 	}
 }
 
+func TestAdminExportCSRF(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	t.Run("POST export with session", func(t *testing.T) {
+		body := bytes.NewBufferString(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		out := rec.Body.String()
+		for _, key := range []string{`"settings"`, `"pages"`, `"work"`, `"studio"`} {
+			if !strings.Contains(out, key) {
+				t.Fatalf("export body missing %s: %s", key, out)
+			}
+		}
+	})
+
+	t.Run("GET export gone", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/export", nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code == http.StatusOK {
+			t.Fatal("GET export must not succeed")
+		}
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("POST export without session", func(t *testing.T) {
+		body := bytes.NewBufferString(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("cross-site Sec-Fetch-Site forbidden", func(t *testing.T) {
+		body := bytes.NewBufferString(`{}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 func sessionCookie(rec *httptest.ResponseRecorder) string {
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "session" {

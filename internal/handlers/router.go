@@ -41,7 +41,7 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 
 	mux.Handle("POST /api/admin/preview", requireAuth(deps.AdminPreview))
 	mux.Handle("POST /api/admin/import", requireAuth(deps.AdminImport))
-	mux.Handle("GET /api/admin/export", requireAuth(deps.AdminExport))
+	mux.Handle("POST /api/admin/export", requireAuth(deps.AdminExport))
 
 	mux.Handle("GET /api/admin/posts", requireAuth(deps.AdminListPosts))
 	mux.Handle("POST /api/admin/posts", requireAuth(deps.AdminCreatePost))
