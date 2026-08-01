@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/microcosm-cc/bluemonday v1.0.27
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.54.0
 )

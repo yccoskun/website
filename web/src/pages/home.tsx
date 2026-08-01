@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { AccordionItem } from "@/components/accordion";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";

@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { ErrorState, LoadingState } from "@/components/states";
 import { useDocumentMeta } from "@/lib/meta";

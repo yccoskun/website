@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";

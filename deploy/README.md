@@ -162,22 +162,45 @@ Then `sudo systemctl daemon-reload && sudo systemctl restart website`.
 
 ## CI → deploy flow
 
-On push to `main`, `.github/workflows/deploy.yml`:
+On push to `main`, `.github/workflows/deploy.yml` runs a two-job pipeline.
+Trust model for this single-tenant setup:
 
-1. **build job** (GitHub-hosted): Go tests + `govulncheck`, Bun/Vite frontend
-   build, copies `web/dist` into `internal/static/dist` for `//go:embed`,
-   cross-compiles a static Linux amd64 binary, uploads it as the `website`
-   artifact.
-2. **deploy job** (self-hosted runner, `linux` + `website` labels): waits for
-   manual approval, then downloads the artifact and runs
-   `sudo /usr/local/bin/deploy-website`.
+### Build
 
-The approval gate comes from the `production` environment: in the GitHub repo
-go to **Settings → Environments → production → Required reviewers** and add
-yourself. Every deploy then pauses until you approve it in the Actions UI.
+Only the GitHub-hosted `build` job on this repo’s `main` produces the
+`website` artifact. That job runs Go tests, pinned `govulncheck`, a frozen
+Bun install, the Vite frontend build (embedded into the binary), and a
+static Linux amd64 `go build`. No other workflow or host should be treated
+as an authoritative producer of that artifact.
 
-`deploy-website` should atomically replace `/opt/website/website` and run
-`systemctl restart website`.
+### Approval
+
+The `deploy` job uses Environment `production` with required reviewers
+(Settings → Environments → production → Required reviewers). Only those
+reviewers can approve a release; every deploy pauses in the Actions UI
+until approval.
+
+### Staging path
+
+After approval, `actions/download-artifact` on the self-hosted runner
+(`self-hosted`, `linux`, `website`) writes the artifact to
+`/home/github-runner/staging`. Only that runner identity should write that
+path. Humans should not drop unsigned binaries there for `deploy-website`
+to pick up — the intended input is always the CI-built artifact from
+`main`.
+
+### Activate
+
+`sudo /usr/local/bin/deploy-website` (server-local, not in this repo)
+atomically replaces `/opt/website/website` and restarts the unit
+(`systemctl restart website`).
+
+### Frontend audit
+
+`.github/workflows/frontend-audit.yml` runs weekly (Mondays 06:00 UTC) and
+on `workflow_dispatch`. It installs with a frozen lockfile and runs
+`bun audit`. Treat red runs as actionable: bump the dependency, or document
+an ignore with rationale. Local parity: `bun run audit` in `web/`.
 
 ## Smoke checks after deploy
 

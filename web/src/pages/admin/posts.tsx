@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiDelete, apiGet } from "@/lib/api";

@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router";
 
 import { MoonIcon, SunIcon } from "@/components/icons";
 import { useTheme } from "@/components/theme-provider";
