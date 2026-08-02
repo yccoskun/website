@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -1323,4 +1324,218 @@ func TestSecurityEventLogging(t *testing.T) {
 		}
 		assertLogNoEvent(t, buf.String(), "media_delete")
 	})
+}
+
+func loginTestAdmin(t *testing.T, router http.Handler) string {
+	t.Helper()
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+	return cookie
+}
+
+func assertSafeAPIErrorBody(t *testing.T, body string) {
+	t.Helper()
+	for _, leak := range []string{
+		"goroutine", ".go:", "/home/", "/tmp/", "uploads/",
+		"sqlite", "CONSTRAINT", "SELECT", "INSERT",
+	} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("body must not contain path/stack leak %q; got %q", leak, body)
+		}
+	}
+}
+
+func TestOversizedJSONBodyReturns413(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	payload := `{"slug":"` + strings.Repeat("a", 1<<20) + `","title":"t","summary":"s","content_md":"c","published":false}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/posts", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "session="+cookie)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assertEnvelope(t, rec, http.StatusRequestEntityTooLarge, `{"data":null,"error":"request body too large"}`)
+	assertSafeAPIErrorBody(t, rec.Body.String())
+}
+
+func TestOversizedImportBodyReturns413(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	body := strings.NewReader(strings.Repeat("x", 8<<20+1))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Cookie", "session="+cookie)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assertEnvelope(t, rec, http.StatusRequestEntityTooLarge, `{"data":null,"error":"request body too large"}`)
+	assertSafeAPIErrorBody(t, rec.Body.String())
+}
+
+type fillReader byte
+
+func (b fillReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(b)
+	}
+	return len(p), nil
+}
+
+func TestOversizedMultipartUploadSafeError(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	// Valid multipart with a file larger than MaxBytesReader so ParseMultipartForm
+	// hits *http.MaxBytesError (413), not a soft parse failure (400).
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	contentType := mw.FormDataContentType()
+	go func() {
+		defer func() { _ = pw.Close() }()
+		part, err := mw.CreateFormFile("file", "huge.bin")
+		if err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_, copyErr := io.Copy(part, io.LimitReader(fillReader('x'), int64(services.MaxUploadBytes+1<<20+1)))
+		closeErr := mw.Close()
+		if copyErr != nil {
+			_ = pw.CloseWithError(copyErr)
+			return
+		}
+		if closeErr != nil {
+			_ = pw.CloseWithError(closeErr)
+		}
+	}()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/media", pr)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Cookie", "session="+cookie)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assertEnvelope(t, rec, http.StatusRequestEntityTooLarge, `{"data":null,"error":"request body too large"}`)
+	assertSafeAPIErrorBody(t, rec.Body.String())
+}
+
+func TestMalformedMultipartOrMissingFileReturns400(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	t.Run("missing file field", func(t *testing.T) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		if err := mw.WriteField("name", "no-file"); err != nil {
+			t.Fatalf("WriteField: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/media", &buf)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"file field required"}`)
+		assertSafeAPIErrorBody(t, rec.Body.String())
+	})
+
+	t.Run("malformed multipart", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/media", strings.NewReader("not-a-multipart-body"))
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=----bound")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		got := rec.Body.String()
+		if !strings.Contains(got, "invalid multipart form or file too large") &&
+			!strings.Contains(got, "file field required") {
+			t.Fatalf("body = %q, want multipart/file error", got)
+		}
+		assertSafeAPIErrorBody(t, got)
+	})
+}
+
+func TestDBFailureReturnsGenericInternalError(t *testing.T) {
+	db := openTestDB(t)
+	router := newIntegrationRouter(t, db, config.Config{})
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/posts", nil))
+	assertEnvelope(t, rec, http.StatusInternalServerError, `{"data":null,"error":"internal error"}`)
+	assertSafeAPIErrorBody(t, rec.Body.String())
+}
+
+func TestInvalidPostIDReturns400(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/posts/abc", nil)
+	req.Header.Set("Cookie", "session="+cookie)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid id"}`)
+}
+
+func TestUnknownAdminPathWithoutCookieReturns404(t *testing.T) {
+	rec := doRequest(t, http.MethodPost, "/api/admin/nonexistent")
+	assertEnvelope(t, rec, http.StatusNotFound, `{"data":null,"error":"not found"}`)
 }

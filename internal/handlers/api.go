@@ -63,6 +63,15 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 	return dec.Decode(dst)
 }
 
+func writeBodyError(w http.ResponseWriter, err error, fallback string) {
+	var maxBytes *http.MaxBytesError
+	if errors.As(err, &maxBytes) {
+		response.Error(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	response.Error(w, http.StatusBadRequest, fallback)
+}
+
 func parseID(s string) (int64, error) {
 	id, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || id <= 0 {
@@ -145,7 +154,7 @@ func (d Deps) confirmAdminPassword(w http.ResponseWriter, password string) bool 
 func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 
@@ -193,7 +202,7 @@ func (d Deps) AdminMe(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminPreview(w http.ResponseWriter, r *http.Request) {
 	var body previewRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	html, err := services.RenderMarkdown(body.ContentMD)
@@ -233,7 +242,7 @@ func (d Deps) AdminGetPost(w http.ResponseWriter, r *http.Request) {
 func (d Deps) AdminCreatePost(w http.ResponseWriter, r *http.Request) {
 	var body postRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	post, err := d.Posts.Create(services.PostInput{
@@ -259,7 +268,7 @@ func (d Deps) AdminUpdatePost(w http.ResponseWriter, r *http.Request) {
 	}
 	var body postRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	post, err := d.Posts.Update(id, services.PostInput{
@@ -304,7 +313,7 @@ func (d Deps) AdminListResumeEntries(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminCreateResumeEntry(w http.ResponseWriter, r *http.Request) {
 	var body resumeEntryRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	entry, err := d.Resume.CreateEntry(services.ResumeEntryInput{
@@ -333,7 +342,7 @@ func (d Deps) AdminUpdateResumeEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	var body resumeEntryRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	entry, err := d.Resume.UpdateEntry(id, services.ResumeEntryInput{

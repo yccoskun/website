@@ -182,7 +182,7 @@ func (d Deps) AdminGetSettings(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminPutSettings(w http.ResponseWriter, r *http.Request) {
 	var body settingsRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	if body.Settings == nil {
@@ -221,7 +221,7 @@ func (d Deps) AdminGetPage(w http.ResponseWriter, r *http.Request) {
 func (d Deps) AdminPutPage(w http.ResponseWriter, r *http.Request) {
 	var body pageRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	page, err := d.Pages.Upsert(r.PathValue("slug"), services.PageInput{
@@ -250,7 +250,7 @@ func (d Deps) AdminListWork(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminCreateWork(w http.ResponseWriter, r *http.Request) {
 	var body workRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	item, err := d.Work.Create(services.WorkInput{
@@ -273,7 +273,7 @@ func (d Deps) AdminUpdateWork(w http.ResponseWriter, r *http.Request) {
 	}
 	var body workRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	item, err := d.Work.Update(id, services.WorkInput{
@@ -315,7 +315,7 @@ func (d Deps) AdminListStudio(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminCreateStudio(w http.ResponseWriter, r *http.Request) {
 	var body studioRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	item, err := d.Studio.Create(services.StudioInput{
@@ -339,7 +339,7 @@ func (d Deps) AdminUpdateStudio(w http.ResponseWriter, r *http.Request) {
 	}
 	var body studioRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	item, err := d.Studio.Update(id, services.StudioInput{
@@ -382,7 +382,7 @@ func (d Deps) AdminListResumeSections(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminCreateResumeSection(w http.ResponseWriter, r *http.Request) {
 	var body resumeSectionRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	sec, err := d.Resume.CreateSection(services.ResumeSectionInput{
@@ -404,7 +404,7 @@ func (d Deps) AdminUpdateResumeSection(w http.ResponseWriter, r *http.Request) {
 	}
 	var body resumeSectionRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	sec, err := d.Resume.UpdateSection(id, services.ResumeSectionInput{
@@ -445,7 +445,7 @@ func (d Deps) AdminListMedia(w http.ResponseWriter, _ *http.Request) {
 func (d Deps) AdminUploadMedia(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, services.MaxUploadBytes+1<<20)
 	if err := r.ParseMultipartForm(services.MaxUploadBytes + 1<<20); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid multipart form or file too large")
+		writeBodyError(w, err, "invalid multipart form or file too large")
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -494,12 +494,12 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid body")
+		writeBodyError(w, err, "invalid body")
 		return
 	}
 	var body importRequest
 	if err := json.Unmarshal(raw, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	if !d.confirmAdminPassword(w, body.Password) {
@@ -529,7 +529,7 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 func (d Deps) AdminExport(w http.ResponseWriter, r *http.Request) {
 	var body exportRequest
 	if err := decodeJSON(w, r, &body); err != nil {
-		response.Error(w, http.StatusBadRequest, "invalid json")
+		writeBodyError(w, err, "invalid json")
 		return
 	}
 	if !d.confirmAdminPassword(w, body.Password) {

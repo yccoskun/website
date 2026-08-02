@@ -86,7 +86,7 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 
 	mux.HandleFunc("/api/", NotFound)
 	mux.Handle("/", spa)
-	return middleware.SecurityHeaders(mux)
+	return middleware.SecurityHeaders(middleware.Recover(mux))
 }
 
 // NotFound is the catch-all for API requests matching no registered route.
