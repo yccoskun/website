@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yccoskun/website/internal/services"
@@ -104,5 +105,84 @@ func TestMediaRejectsBadType(t *testing.T) {
 	_, err = media.Create("x.exe", "application/x-msdownload", bytes.NewReader([]byte("MZ")), 2)
 	if err == nil || !errors.Is(err, services.ErrValidation) {
 		t.Fatalf("want ErrValidation, got %v", err)
+	}
+}
+
+func TestSanitizeFilename(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", "upload"},
+		{".", "upload"},
+		{"..", "upload"},
+		{"...", "upload"},
+		{"photo.png", "photo.png"},
+		{"my photo.png", "my-photo.png"},
+		{`evil"name.pdf`, "evilname.pdf"},
+		{"evil\r\ninject.pdf", "evilinject.pdf"},
+		{"../../evil.pdf", "evil.pdf"},
+		{"/tmp/path/seg.pdf", "seg.pdf"},
+		{`path\seg.pdf`, "pathseg.pdf"},
+		{"name;inject.pdf", "nameinject.pdf"},
+		{"nul\x00byte.pdf", "nulbyte.pdf"},
+		{"café.png", "caf.png"},
+		{"!!!", "upload"},
+	}
+	for _, tc := range cases {
+		got := services.SanitizeFilename(tc.in)
+		if got != tc.want {
+			t.Fatalf("SanitizeFilename(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if strings.ContainsAny(got, "\"\r\n/\\\x00;") {
+			t.Fatalf("SanitizeFilename(%q) = %q still unsafe", tc.in, got)
+		}
+		for _, r := range got {
+			if r > 127 {
+				t.Fatalf("SanitizeFilename(%q) = %q has non-ASCII", tc.in, got)
+			}
+		}
+	}
+}
+
+func TestContentDisposition(t *testing.T) {
+	cases := []struct {
+		mime, name, want string
+	}{
+		{"image/jpeg", "photo.jpg", `inline; filename="photo.jpg"`},
+		{"image/png", "still.png", `inline; filename="still.png"`},
+		{"image/gif", "anim.gif", `inline; filename="anim.gif"`},
+		{"image/webp", "shot.webp", `inline; filename="shot.webp"`},
+		{"IMAGE/PNG", "still.png", `inline; filename="still.png"`},
+		{"image/png; charset=binary", "still.png", `inline; filename="still.png"`},
+		{"  Application/PDF  ", "cv.pdf", `attachment; filename="cv.pdf"`},
+		{"application/pdf", "cv.pdf", `attachment; filename="cv.pdf"`},
+		{"application/pdf", "evil\"\r\nname.pdf", `attachment; filename="evilname.pdf"`},
+		{"application/pdf", "", `attachment; filename="upload"`},
+		{"image/png", "../../evil.png", `inline; filename="evil.png"`},
+		{"application/pdf", "../../evil.pdf", `attachment; filename="evil.pdf"`},
+		{"text/plain", "notes.txt", ""},
+		{"application/octet-stream", "bin", ""},
+	}
+	for _, tc := range cases {
+		got := services.ContentDisposition(tc.mime, tc.name)
+		if got != tc.want {
+			t.Fatalf("ContentDisposition(%q, %q) = %q, want %q", tc.mime, tc.name, got, tc.want)
+		}
+		if got == "" {
+			continue
+		}
+		if strings.ContainsAny(got, "\r\n") {
+			t.Fatalf("ContentDisposition(%q, %q) contains CRLF: %q", tc.mime, tc.name, got)
+		}
+		// Quoted filename must not reintroduce quotes or path segments.
+		start := strings.Index(got, `filename="`)
+		if start < 0 {
+			t.Fatalf("ContentDisposition(%q, %q) missing filename=: %q", tc.mime, tc.name, got)
+		}
+		fname := got[start+len(`filename="`):]
+		fname = strings.TrimSuffix(fname, `"`)
+		if strings.ContainsAny(fname, "\"\r\n/\\\x00;") {
+			t.Fatalf("filename in %q is unsafe: %q", got, fname)
+		}
 	}
 }

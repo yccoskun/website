@@ -1231,6 +1231,16 @@ func TestMediaAccessControl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pub studio: %v", err)
 	}
+	evilAsset, err := media.Create("evil\"\r\n../../inject.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("evil asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "evil-still", Title: "Evil", ImageMediaID: &evilAsset.ID, Published: true,
+	})
+	if err != nil {
+		t.Fatalf("evil studio: %v", err)
+	}
 	pdf := []byte("%PDF-1.4 resume")
 	resumePDF, err := media.Create("cv.pdf", "application/pdf", bytes.NewReader(pdf), int64(len(pdf)))
 	if err != nil {
@@ -1321,11 +1331,34 @@ func TestMediaAccessControl(t *testing.T) {
 		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
 			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
 		}
-		if rec.Header().Get("Content-Disposition") != "" {
-			t.Fatalf("Content-Disposition = %q, want empty for images", rec.Header().Get("Content-Disposition"))
+		wantCD := `inline; filename="pub.png"`
+		if cd := rec.Header().Get("Content-Disposition"); cd != wantCD {
+			t.Fatalf("Content-Disposition = %q, want %q", cd, wantCD)
+		}
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("X-Content-Type-Options = %q, want nosniff", rec.Header().Get("X-Content-Type-Options"))
 		}
 		if !bytes.Equal(rec.Body.Bytes(), png) {
 			t.Fatalf("body = %q", rec.Body.Bytes())
+		}
+	})
+
+	t.Run("anonymous evil filename sanitized disposition", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(evilAsset.ID, 10), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		wantCD := `inline; filename="inject.png"`
+		cd := rec.Header().Get("Content-Disposition")
+		if cd != wantCD {
+			t.Fatalf("Content-Disposition = %q, want %q", cd, wantCD)
+		}
+		if strings.Contains(cd, "\r") || strings.Contains(cd, "\n") || strings.Contains(cd, "..") {
+			t.Fatalf("Content-Disposition still unsafe: %q", cd)
+		}
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("X-Content-Type-Options = %q, want nosniff", rec.Header().Get("X-Content-Type-Options"))
 		}
 	})
 
@@ -1339,12 +1372,15 @@ func TestMediaAccessControl(t *testing.T) {
 		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
 			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
 		}
-		cd := rec.Header().Get("Content-Disposition")
-		if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "cv.pdf") {
-			t.Fatalf("Content-Disposition = %q, want attachment with cv.pdf", cd)
+		wantCD := `attachment; filename="cv.pdf"`
+		if cd := rec.Header().Get("Content-Disposition"); cd != wantCD {
+			t.Fatalf("Content-Disposition = %q, want %q", cd, wantCD)
 		}
 		if rec.Header().Get("Content-Type") != "application/pdf" {
 			t.Fatalf("Content-Type = %q, want application/pdf", rec.Header().Get("Content-Type"))
+		}
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("X-Content-Type-Options = %q, want nosniff", rec.Header().Get("X-Content-Type-Options"))
 		}
 	})
 

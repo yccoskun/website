@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/yccoskun/website/internal/models"
 )
@@ -248,20 +247,41 @@ func (s *MediaService) IsPubliclyReferenced(id int64) (bool, error) {
 	return true, nil
 }
 
-// SanitizeFilename returns a filesystem-safe base name for uploads and
-// Content-Disposition headers.
+// SanitizeFilename returns a filesystem-safe ASCII base name for uploads and
+// Content-Disposition quoted filenames. Non-ASCII letters are stripped.
 func SanitizeFilename(name string) string {
 	base := filepath.Base(name)
 	base = strings.ReplaceAll(base, " ", "-")
 	var b strings.Builder
 	for _, r := range base {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '.' || r == '-' || r == '_' {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
 			b.WriteRune(r)
 		}
 	}
 	out := b.String()
-	if out == "" || out == "." {
+	// Bare "." / ".." / all-dots (e.g. "...") are not usable names.
+	if out == "" || strings.Trim(out, ".") == "" {
 		return "upload"
 	}
 	return out
+}
+
+// ContentDisposition returns a Content-Disposition header value for the given
+// MIME and original filename, or "" when disposition should be omitted.
+func ContentDisposition(mimeType, originalName string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(mimeType, ';'); i >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:i])
+	}
+	name := SanitizeFilename(originalName)
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return `inline; filename="` + name + `"`
+	case "application/pdf":
+		return `attachment; filename="` + name + `"`
+	default:
+		return ""
+	}
 }
