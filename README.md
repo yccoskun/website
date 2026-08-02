@@ -42,10 +42,15 @@ export ADMIN_PASSWORD_HASH='your-bcrypt-hash'
 go run ./cmd/server
 ```
 
-Generate a bcrypt password hash with:
+Generate a bcrypt password hash with the interactive prompt (no echo) — prefer
+this for production. Argv is rejected; do not pass the password on the command
+line. For automation, redirect from a mode-0600 file rather than embedding the
+secret in a shell command (inline secrets can still land in shell history or
+process argv):
 
 ```bash
 go run ./cmd/hashpw
+go run ./cmd/hashpw < /path/to/secret
 ```
 
 ## Test and build

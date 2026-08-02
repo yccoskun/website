@@ -136,7 +136,7 @@ set. Write `/etc/website.env` (mode `0640`, owned `root:deploy`):
 
 ```bash
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD_HASH=$2a$12$...   # generate with: go run ./cmd/hashpw
+ADMIN_PASSWORD_HASH=$2a$12$...   # prefer: go run ./cmd/hashpw (interactive); automation: go run ./cmd/hashpw < /path/to/secret (mode 0600); argv rejected — avoid inline secrets in shell commands
 ```
 
 `ADDR` (default `127.0.0.1:9000`), `DB_PATH` (default `data/website.db`), and
@@ -173,8 +173,11 @@ Acceptance checklist before shipping any change that touches auth, sessions, or
 cookies (see `internal/auth/`, `internal/services/sessions.go`):
 
 - [ ] **Passwords** — stored only as bcrypt hashes via `ADMIN_PASSWORD_HASH`
-      (generated with `go run ./cmd/hashpw`). Never plaintext, never a
-      reversible encoding, never logged.
+      (prefer interactive `go run ./cmd/hashpw`; for automation redirect from a
+      mode-0600 file, e.g. `go run ./cmd/hashpw < /path/to/secret`. Argv is
+      rejected; avoid inline secrets in shell commands — they can still land in
+      history/process argv). Never plaintext, never a reversible encoding,
+      never logged.
 - [ ] **Sessions** — raw tokens are 256-bit (`crypto/rand`, 32 bytes → 64 hex
       chars). The database stores only the SHA-256 hash of the token
       (`token_hash` column); the raw token exists solely in the session
