@@ -167,6 +167,27 @@ EnvironmentFile=-/etc/website.env
 
 Then `sudo systemctl daemon-reload && sudo systemctl restart website`.
 
+## Cryptographic posture
+
+Acceptance checklist before shipping any change that touches auth, sessions, or
+cookies (see `internal/auth/`, `internal/services/sessions.go`):
+
+- [ ] **Passwords** — stored only as bcrypt hashes via `ADMIN_PASSWORD_HASH`
+      (generated with `go run ./cmd/hashpw`). Never plaintext, never a
+      reversible encoding, never logged.
+- [ ] **Sessions** — raw tokens are 256-bit (`crypto/rand`, 32 bytes → 64 hex
+      chars). The database stores only the SHA-256 hash of the token
+      (`token_hash` column); the raw token exists solely in the session
+      cookie sent to the browser.
+- [ ] **Cookie flags** — `HttpOnly` always set; `SameSite=Lax` always set;
+      `Secure` is set for every public Hostname, including tunnel/proxy
+      hostnames (e.g. `*.trycloudflare.com`), and is only skipped for
+      loopback Hosts (`localhost`, `127.0.0.1`, `::1`) used in local dev.
+- [ ] **Auth model** — sessions are opaque, server-side, and validated by
+      hash lookup. No JWT or other self-contained/stateless token format.
+- [ ] **Env file** — `/etc/website.env` stays mode `0640`, owned
+      `root:deploy` (see [Environment file](#environment-file) above).
+
 ## CI → deploy flow
 
 On push to `main`, `.github/workflows/deploy.yml` runs a two-job pipeline.

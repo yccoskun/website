@@ -1,11 +1,16 @@
 package services_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/yccoskun/website/internal/services"
 )
+
+var hexTokenPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func TestSessionCreateValidate(t *testing.T) {
 	db := openCMSDB(t)
@@ -30,6 +35,48 @@ func TestSessionCreateValidate(t *testing.T) {
 	}
 	if !ok {
 		t.Fatal("expected valid session")
+	}
+}
+
+func TestSessionCreateTokenIsHexFormat(t *testing.T) {
+	db := openCMSDB(t)
+	svc := services.NewSessionService(db)
+
+	token, _, err := svc.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !hexTokenPattern.MatchString(token) {
+		t.Fatalf("token = %q, want 64 lowercase hex chars (32 bytes)", token)
+	}
+}
+
+func TestSessionCreateStoresOnlyTokenHash(t *testing.T) {
+	db := openCMSDB(t)
+	svc := services.NewSessionService(db)
+
+	token, _, err := svc.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var storedHash string
+	if err := db.QueryRow(`SELECT token_hash FROM sessions`).Scan(&storedHash); err != nil {
+		t.Fatalf("select token_hash: %v", err)
+	}
+
+	sum := sha256.Sum256([]byte(token))
+	wantHash := hex.EncodeToString(sum[:])
+	if storedHash != wantHash {
+		t.Fatalf("stored token_hash = %q, want sha256(raw) = %q", storedHash, wantHash)
+	}
+
+	ok, err := svc.Validate(token)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected Validate to succeed with the raw token")
 	}
 }
 

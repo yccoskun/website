@@ -363,6 +363,72 @@ func TestLoginCookieAndAdminList(t *testing.T) {
 	assertEnvelope(t, listRec, http.StatusOK, `{"data":[],"error":null}`)
 }
 
+func loginWithHost(t *testing.T, router http.Handler, host string) *httptest.ResponseRecorder {
+	t.Helper()
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Host = host
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	return loginRec
+}
+
+func TestLoginCookie_publicHostIsSecure(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginRec := loginWithHost(t, router, "www.yusufcancoskun.com")
+
+	found := sessionCookieFull(loginRec)
+	if found == nil {
+		t.Fatal("expected session cookie")
+	}
+	if !found.HttpOnly {
+		t.Error("expected HttpOnly=true")
+	}
+	if found.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", found.SameSite)
+	}
+	if !found.Secure {
+		t.Error("expected Secure=true for public Host")
+	}
+}
+
+func TestLoginCookie_localhostIsNotSecure(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginRec := loginWithHost(t, router, "localhost")
+
+	setCookie := loginRec.Header().Get("Set-Cookie")
+	if setCookie == "" {
+		t.Fatal("expected Set-Cookie header")
+	}
+	if strings.Contains(setCookie, "Secure") {
+		t.Fatalf("Set-Cookie = %q, want no Secure attribute on loopback Host", setCookie)
+	}
+}
+
 func TestAdminPreviewWithoutCookieReturns401(t *testing.T) {
 	db := openTestDB(t)
 	router := newIntegrationRouter(t, db, config.Config{})
@@ -1026,10 +1092,8 @@ func TestAdminImportIntegrity(t *testing.T) {
 }
 
 func sessionCookie(rec *httptest.ResponseRecorder) string {
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == "session" {
-			return c.Value
-		}
+	if c := sessionCookieFull(rec); c != nil {
+		return c.Value
 	}
 	for _, h := range rec.Header().Values("Set-Cookie") {
 		if strings.HasPrefix(h, "session=") {
@@ -1038,6 +1102,17 @@ func sessionCookie(rec *httptest.ResponseRecorder) string {
 		}
 	}
 	return ""
+}
+
+// sessionCookieFull returns the parsed session cookie (with flags such as
+// HttpOnly/SameSite/Secure) from a response, or nil if not present.
+func sessionCookieFull(rec *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			return c
+		}
+	}
+	return nil
 }
 
 func TestMediaAccessControl(t *testing.T) {
