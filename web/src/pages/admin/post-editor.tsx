@@ -6,7 +6,7 @@ import { ErrorState, LoadingState } from "@/components/states";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { useDebouncedValue } from "@/lib/debounce";
 import { useDocumentMeta } from "@/lib/meta";
-import { slugify } from "@/lib/slug";
+import { isValidPostSlug, slugify } from "@/lib/slug";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
 import type { OkResponse, PreviewResponse } from "@/types/admin";
 import type { Post } from "@/types/post";
@@ -171,10 +171,17 @@ export function AdminPostEditorPage() {
   async function onSave(e: FormEvent) {
     e.preventDefault();
     setSaveError(null);
+    const slug = form.slug.trim();
+    if (!isValidPostSlug(slug)) {
+      setSaveError(
+        "Slug must be lowercase letters, digits, and single hyphens (max 100).",
+      );
+      return;
+    }
     setSaving(true);
     const body = {
       title: form.title,
-      slug: form.slug,
+      slug,
       summary: form.summary,
       content_md: form.content_md,
       published: form.published,

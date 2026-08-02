@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -64,12 +65,20 @@ func scanPost(scanner interface {
 	return p, nil
 }
 
+var postSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+const maxPostSlugLen = 100
+
 func validatePostInput(in PostInput) error {
 	if strings.TrimSpace(in.Title) == "" {
 		return fmt.Errorf("%w: title is required", ErrValidation)
 	}
-	if strings.TrimSpace(in.Slug) == "" {
+	slug := strings.TrimSpace(in.Slug)
+	if slug == "" {
 		return fmt.Errorf("%w: slug is required", ErrValidation)
+	}
+	if len(slug) > maxPostSlugLen || !postSlugPattern.MatchString(slug) {
+		return fmt.Errorf("%w: slug must be lowercase letters, digits, and single hyphens (max 100)", ErrValidation)
 	}
 	return nil
 }

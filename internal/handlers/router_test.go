@@ -214,7 +214,7 @@ func TestSitemapIncludesPublishedPost(t *testing.T) {
 	}
 
 	createBody := bytes.NewBufferString(
-		`{"slug":"hello-feed","title":"Hello Feed","summary":"sum","content_md":"# hi","published":true}`,
+		`{"slug":"hello-feed","title":"Hello & Feed","summary":"sum & more","content_md":"# hi","published":true}`,
 	)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
@@ -234,8 +234,57 @@ func TestSitemapIncludesPublishedPost(t *testing.T) {
 	rssRec := httptest.NewRecorder()
 	router.ServeHTTP(rssRec, httptest.NewRequest(http.MethodGet, "/rss.xml", nil))
 	body := rssRec.Body.String()
-	if !strings.Contains(body, "Hello Feed") || !strings.Contains(body, "/blog/hello-feed") {
+	if !strings.Contains(body, "Hello &amp; Feed") || !strings.Contains(body, "sum &amp; more") {
+		t.Fatalf("rss body = %q, want XML-escaped & in title/summary", body)
+	}
+	if !strings.Contains(body, "/blog/hello-feed") {
 		t.Fatalf("rss body = %q, want published post", body)
+	}
+	if strings.Contains(body, "Hello & Feed") || strings.Contains(body, "sum & more") {
+		t.Fatalf("rss body = %q, raw & must be escaped", body)
+	}
+}
+
+func TestAdminCreatePostRejectsBadSlug(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		SiteURL:           "https://www.yusufcancoskun.com",
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	createBody := bytes.NewBufferString(
+		`{"slug":"bad slug","title":"Bad","summary":"s","content_md":"# hi","published":false}`,
+	)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Cookie", "session="+cookie)
+	createRec := httptest.NewRecorder()
+	router.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusBadRequest {
+		t.Fatalf("create status = %d, want 400; body = %s", createRec.Code, createRec.Body.String())
+	}
+	body := createRec.Body.String()
+	if !strings.Contains(body, "validation:") {
+		t.Fatalf("body = %q, want validation: in error", body)
+	}
+	if !strings.Contains(body, "slug must be lowercase letters, digits, and single hyphens (max 100)") {
+		t.Fatalf("body = %q, want slug rule message", body)
 	}
 }
 
