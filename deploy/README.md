@@ -193,6 +193,15 @@ cookies (see `internal/auth/`, `internal/services/sessions.go`):
 - [ ] **Env file** — `/etc/website.env` stays mode `0640`, owned
       `root:deploy` (see [Environment file](#environment-file) above).
 
+### Auth trust boundary
+
+- React `RequireAdmin` is UX-only (hide the admin shell / show login). It does
+  not authorize access.
+- Authenticated admin routes (`RequireSession`) are the enforcement point
+  (session cookie + Sec-Fetch-Site). Login and logout are not covered by
+  `RequireSession`.
+- Authenticated admin JSON responses set `Cache-Control: private, no-store`.
+
 ### Sec-Fetch-Site on authenticated admin APIs
 
 Authenticated admin routes (`RequireSession`) allow a missing

@@ -5,12 +5,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/database"
 	"github.com/yccoskun/website/internal/services"
 )
+
+func assertPrivateNoStore(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	cc := rec.Header().Get("Cache-Control")
+	if !strings.Contains(cc, "no-store") || !strings.Contains(cc, "private") {
+		t.Fatalf("Cache-Control = %q, want private, no-store", cc)
+	}
+}
 
 func openSessionTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -61,6 +70,7 @@ func TestRequireSessionRejectsDisallowedSecFetchSite(t *testing.T) {
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
 			}
+			assertPrivateNoStore(t, rec)
 		})
 	}
 }
@@ -100,6 +110,7 @@ func TestRequireSessionAllowsSameOriginAndMissing(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 			}
+			assertPrivateNoStore(t, rec)
 		})
 	}
 }
@@ -117,4 +128,5 @@ func TestRequireSessionUnauthorizedWithoutCookie(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
+	assertPrivateNoStore(t, rec)
 }

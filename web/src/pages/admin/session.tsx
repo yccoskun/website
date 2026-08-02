@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router";
 
 import { ApiError, apiGet, apiPost } from "@/lib/api";
 import type { LoginOk, MeResponse } from "@/types/admin";
@@ -26,10 +27,17 @@ interface AdminSessionValue {
 const AdminSessionContext = createContext<AdminSessionValue | null>(null);
 
 export function AdminSessionProvider({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [status, setStatus] = useState<AdminSessionStatus>("checking");
   const [username, setUsername] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+
+  /** Replace the current history entry to drop create-post seed from state. */
+  const clearCurrentHistoryState = useCallback(() => {
+    navigate(location.pathname || "/admin", { replace: true, state: null });
+  }, [navigate, location.pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +56,11 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         if (err instanceof ApiError && err.status === 401) {
           setBootError(null);
           setStatus("anonymous");
+          // Clear create-post seed on this entry when present; skip if already clean
+          // (avoids replace loops / checking flash on anonymous boot with no state).
+          if (location.state != null) {
+            clearCurrentHistoryState();
+          }
           return;
         }
         setBootError(err instanceof ApiError ? err.message : "Failed to check session");
@@ -56,17 +69,25 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
+    // Intentionally [retryToken] only: including location.state would re-run the
+    // check after clearCurrentHistoryState and flash "checking".
   }, [retryToken]);
 
   const retry = useCallback(() => {
     setRetryToken((n) => n + 1);
   }, []);
 
-  const onUnauthorized = useCallback(() => {
+  /** Drop local session and clear the current history entry's state (create-post seed). */
+  const dropToAnonymous = useCallback(() => {
     setUsername(null);
     setBootError(null);
     setStatus("anonymous");
-  }, []);
+    clearCurrentHistoryState();
+  }, [clearCurrentHistoryState]);
+
+  const onUnauthorized = useCallback(() => {
+    dropToAnonymous();
+  }, [dropToAnonymous]);
 
   const login = useCallback(async (user: string, password: string) => {
     try {
@@ -88,15 +109,14 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Flip anonymous first so RequireAdmin unmounts the shell immediately.
+    dropToAnonymous();
     try {
       await apiPost<LoginOk>("/api/admin/logout", {});
     } catch {
-      // Cookie clear is best-effort; always drop local session.
+      // Cookie clear is best-effort; local session already dropped.
     }
-    setUsername(null);
-    setBootError(null);
-    setStatus("anonymous");
-  }, []);
+  }, [dropToAnonymous]);
 
   const value = useMemo(
     () => ({ status, username, bootError, login, logout, retry, onUnauthorized }),

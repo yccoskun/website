@@ -4,7 +4,10 @@ import { ErrorState, LoadingState } from "@/components/states";
 import { LoginPage } from "@/pages/admin/login";
 import { useAdminSession } from "@/pages/admin/session";
 
-/** Gates admin routes: checking → load; error → retry; anonymous → login; authed → children. */
+/**
+ * UX gating only: checking → load; error → retry; anonymous → login; authed → children.
+ * Does not authorize access — the admin API / session cookie enforce that.
+ */
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const { status, bootError, retry } = useAdminSession();
 

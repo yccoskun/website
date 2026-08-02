@@ -24,13 +24,16 @@ func allowedSecFetchSite(site string) bool {
 }
 
 // RequireSession rejects requests without a valid admin session cookie.
-// Sec-Fetch-Site must be missing or one of: same-origin, same-site, none
-// (case-insensitive). Any other value (including cross-site) yields 403
-// before session validation. Export and other requireAuth routes share this
-// check; there is no second Sec-Fetch wrapper on export. Login and logout
-// are not wrapped by RequireSession.
+// Sets Cache-Control: private, no-store on every response (including
+// 401/403) before session checks. Sec-Fetch-Site must be missing or one
+// of: same-origin, same-site, none (case-insensitive). Any other value
+// (including cross-site) yields 403 before session validation. Export and
+// other requireAuth routes share this check; there is no second Sec-Fetch
+// wrapper on export. Login and logout are not wrapped by RequireSession.
 func RequireSession(sessions *services.SessionService, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Authenticated admin JSON must not be stored by shared caches.
+		w.Header().Set("Cache-Control", "private, no-store")
 		if !allowedSecFetchSite(r.Header.Get("Sec-Fetch-Site")) {
 			response.Error(w, http.StatusForbidden, "forbidden")
 			return
