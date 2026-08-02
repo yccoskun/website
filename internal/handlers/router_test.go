@@ -702,6 +702,49 @@ func TestCMSRejectsDangerousURLs(t *testing.T) {
 	}
 }
 
+func TestAdminAPISecFetchSite(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	t.Run("cross-site forbidden", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusForbidden, `{"data":null,"error":"forbidden"}`)
+		body := rec.Body.String()
+		if strings.Contains(body, `"data":[`) || strings.Contains(body, `"error":null`) {
+			t.Fatalf("body looks like CMS list JSON: %s", body)
+		}
+	})
+
+	t.Run("same-origin allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusOK, `{"data":[],"error":null}`)
+	})
+
+	t.Run("missing Sec-Fetch-Site allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusOK, `{"data":[],"error":null}`)
+	})
+}
+
 func TestAdminExportCSRF(t *testing.T) {
 	db := openTestDB(t)
 	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)

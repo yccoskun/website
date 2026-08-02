@@ -25,7 +25,7 @@ func openSessionTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestRequireSessionRejectsCrossSite(t *testing.T) {
+func TestRequireSessionRejectsDisallowedSecFetchSite(t *testing.T) {
 	db := openSessionTestDB(t)
 	sessions := services.NewSessionService(db)
 	token, _, err := sessions.Create()
@@ -38,13 +38,29 @@ func TestRequireSessionRejectsCrossSite(t *testing.T) {
 	})
 	handler := RequireSession(sessions, next)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: token})
-	req.Header.Set("Sec-Fetch-Site", "cross-site")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+	cases := []struct {
+		name   string
+		site   string
+		cookie bool
+	}{
+		{name: "cross-site", site: "cross-site", cookie: true},
+		{name: "Cross-Site case-insensitive", site: "Cross-Site", cookie: true},
+		{name: "cross-site without cookie", site: "cross-site", cookie: false},
+		{name: "unknown evil", site: "evil", cookie: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+			if tc.cookie {
+				req.AddCookie(&http.Cookie{Name: "session", Value: token})
+			}
+			req.Header.Set("Sec-Fetch-Site", tc.site)
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -67,6 +83,7 @@ func TestRequireSessionAllowsSameOriginAndMissing(t *testing.T) {
 	}{
 		{name: "missing", site: ""},
 		{name: "same-origin", site: "same-origin"},
+		{name: "SAME-ORIGIN case-insensitive", site: "SAME-ORIGIN"},
 		{name: "same-site", site: "same-site"},
 		{name: "none", site: "none"},
 	}

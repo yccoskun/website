@@ -188,6 +188,15 @@ cookies (see `internal/auth/`, `internal/services/sessions.go`):
 - [ ] **Env file** — `/etc/website.env` stays mode `0640`, owned
       `root:deploy` (see [Environment file](#environment-file) above).
 
+### Sec-Fetch-Site on authenticated admin APIs
+
+Authenticated admin routes (`RequireSession`) allow a missing
+`Sec-Fetch-Site` so curl, tests, and scripts keep working. Browsers always
+send the header. Allowed values: missing, `same-origin`, `same-site`,
+`none`. `cross-site` and any other non-allowlisted value → 403. SPA
+same-origin fetches with `credentials: "include"` send `same-origin` and
+are unaffected. Login and logout are not covered by this check.
+
 ## CI → deploy flow
 
 On push to `main`, `.github/workflows/deploy.yml` runs a two-job pipeline.
