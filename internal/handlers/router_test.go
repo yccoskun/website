@@ -292,11 +292,25 @@ func TestUnknownAPIPathReturns404Envelope(t *testing.T) {
 	assertEnvelope(t, rec, http.StatusNotFound, `{"data":null,"error":"not found"}`)
 }
 
-// Wrong-method requests land on the /api/ catch-all (the mux never emits a
-// 405 there — see the NewRouter doc comment) and must stay enveloped JSON.
-func TestWrongMethodReturns404Envelope(t *testing.T) {
+// A wrong-method request against a registered API path must return an
+// enveloped 405 with an Allow header listing the valid methods.
+func TestWrongMethodReturns405Envelope(t *testing.T) {
 	rec := doRequest(t, http.MethodPost, "/api/health")
-	assertEnvelope(t, rec, http.StatusNotFound, `{"data":null,"error":"not found"}`)
+	assertEnvelope(t, rec, http.StatusMethodNotAllowed, `{"data":null,"error":"method not allowed"}`)
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Fatalf("Allow = %q, want it to contain GET", allow)
+	}
+}
+
+// /api/admin/posts registers both GET and POST; a third method must list
+// both in Allow, confirming the header isn't just echoing a single method.
+func TestWrongMethodOnMultiMethodPathListsAllAllowedMethods(t *testing.T) {
+	rec := doRequest(t, http.MethodPut, "/api/admin/posts")
+	assertEnvelope(t, rec, http.StatusMethodNotAllowed, `{"data":null,"error":"method not allowed"}`)
+	allow := rec.Header().Get("Allow")
+	if !strings.Contains(allow, http.MethodGet) || !strings.Contains(allow, http.MethodPost) {
+		t.Fatalf("Allow = %q, want it to contain both GET and POST", allow)
+	}
 }
 
 func TestNonAPIPathReachesSPA(t *testing.T) {
@@ -868,8 +882,9 @@ func TestAdminExportCSRF(t *testing.T) {
 		if rec.Code == http.StatusOK {
 			t.Fatal("GET export must not succeed")
 		}
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+		assertEnvelope(t, rec, http.StatusMethodNotAllowed, `{"data":null,"error":"method not allowed"}`)
+		if allow := rec.Header().Get("Allow"); !strings.Contains(allow, http.MethodPost) {
+			t.Fatalf("Allow = %q, want it to contain POST", allow)
 		}
 	})
 
