@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -818,6 +819,212 @@ func TestAdminExportCSRF(t *testing.T) {
 	})
 }
 
+func TestAdminImportIntegrity(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+	cookie := loginTestAdmin(t, router)
+
+	workBody := bytes.NewBufferString(`{"name":"keep-me","one_liner":"x","body":"","stack":[],"status":"shipped","href":"https://example.com","sort_order":1}`)
+	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
+	workReq.Header.Set("Content-Type", "application/json")
+	workReq.Header.Set("Cookie", "session="+cookie)
+	workRec := httptest.NewRecorder()
+	router.ServeHTTP(workRec, workReq)
+	if workRec.Code != http.StatusCreated {
+		t.Fatalf("create work status = %d, body = %s", workRec.Code, workRec.Body.String())
+	}
+
+	studioBody := bytes.NewBufferString(`{"slug":"keep-studio","title":"Keep Studio","year":"2024","medium":"print","caption":"c","sort_order":1,"published":true}`)
+	studioReq := httptest.NewRequest(http.MethodPost, "/api/admin/studio", studioBody)
+	studioReq.Header.Set("Content-Type", "application/json")
+	studioReq.Header.Set("Cookie", "session="+cookie)
+	studioRec := httptest.NewRecorder()
+	router.ServeHTTP(studioRec, studioReq)
+	if studioRec.Code != http.StatusCreated {
+		t.Fatalf("create studio status = %d, body = %s", studioRec.Code, studioRec.Body.String())
+	}
+
+	secBody := bytes.NewBufferString(`{"kind":"experience","title":"Keep Section","sort_order":1,"accordion":false}`)
+	secReq := httptest.NewRequest(http.MethodPost, "/api/admin/resume/sections", secBody)
+	secReq.Header.Set("Content-Type", "application/json")
+	secReq.Header.Set("Cookie", "session="+cookie)
+	secRec := httptest.NewRecorder()
+	router.ServeHTTP(secRec, secReq)
+	if secRec.Code != http.StatusCreated {
+		t.Fatalf("create resume section status = %d, body = %s", secRec.Code, secRec.Body.String())
+	}
+
+	t.Run("replace_work without confirm returns 400 and keeps work", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_work":true,"work":[]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "replace confirmation required") {
+			t.Fatalf("body = %s, want replace confirmation required", rec.Body.String())
+		}
+
+		listRec := httptest.NewRecorder()
+		router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/work", nil))
+		if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "keep-me") {
+			t.Fatalf("work wiped without confirm; list = %d %s", listRec.Code, listRec.Body.String())
+		}
+	})
+
+	t.Run("replace_studio without confirm returns 400 and keeps studio", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_studio":true,"studio":[]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "replace confirmation required") {
+			t.Fatalf("body = %s, want replace confirmation required", rec.Body.String())
+		}
+
+		listRec := httptest.NewRecorder()
+		router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/studio", nil))
+		if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "keep-studio") {
+			t.Fatalf("studio wiped without confirm; list = %d %s", listRec.Code, listRec.Body.String())
+		}
+	})
+
+	t.Run("replace_resume without confirm returns 400 and keeps resume", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_resume":true,"resume_sections":[],"resume_entries":[]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "replace confirmation required") {
+			t.Fatalf("body = %s, want replace confirmation required", rec.Body.String())
+		}
+
+		listReq := httptest.NewRequest(http.MethodGet, "/api/admin/resume/sections", nil)
+		listReq.Header.Set("Cookie", "session="+cookie)
+		listRec := httptest.NewRecorder()
+		router.ServeHTTP(listRec, listReq)
+		if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "Keep Section") {
+			t.Fatalf("resume wiped without confirm; list = %d %s", listRec.Code, listRec.Body.String())
+		}
+	})
+
+	t.Run("matching confirms and password succeed", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"replace_work":true,"replace_studio":true,"replace_resume":true,"work":[{"name":"imported","one_liner":"y","body":"","stack":[],"status":"shipped","href":"https://example.com/imported","sort_order":1}]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+
+		listRec := httptest.NewRecorder()
+		router.ServeHTTP(listRec, httptest.NewRequest(http.MethodGet, "/api/work", nil))
+		if listRec.Code != http.StatusOK {
+			t.Fatalf("list status = %d", listRec.Code)
+		}
+		out := listRec.Body.String()
+		if !strings.Contains(out, "imported") {
+			t.Fatalf("list missing imported work: %s", out)
+		}
+		if strings.Contains(out, "keep-me") {
+			t.Fatalf("list still has wiped work: %s", out)
+		}
+	})
+
+	t.Run("javascript href in dump returns 400", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"work":[{"name":"evil","one_liner":"","body":"","stack":[],"status":"","href":"javascript:alert(1)","sort_order":1}]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "disallowed url scheme") {
+			t.Fatalf("body = %s, want disallowed url scheme", rec.Body.String())
+		}
+	})
+
+	t.Run("unknown envelope field returns 400", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","evil":true,"dump":{}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
+	})
+
+	t.Run("unknown dump field returns 400", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"not_a_field":1}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
+	})
+
+	t.Run("nested unknown dump field returns 400", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"password":"testpass","dump":{"work":[{"name":"x","one_liner":"","body":"","stack":[],"status":"","href":"https://example.com","sort_order":1,"evil":1}]}}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", "session="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
+	})
+
+	t.Run("export then import with confirms succeeds", func(t *testing.T) {
+		exportBody := bytes.NewBufferString(`{"password":"testpass"}`)
+		exportReq := httptest.NewRequest(http.MethodPost, "/api/admin/export", exportBody)
+		exportReq.Header.Set("Content-Type", "application/json")
+		exportReq.Header.Set("Cookie", "session="+cookie)
+		exportRec := httptest.NewRecorder()
+		router.ServeHTTP(exportRec, exportReq)
+		if exportRec.Code != http.StatusOK {
+			t.Fatalf("export status = %d, body = %s", exportRec.Code, exportRec.Body.String())
+		}
+		var env struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(exportRec.Body.Bytes(), &env); err != nil || len(env.Data) == 0 {
+			t.Fatalf("unwrap export: %v body=%s", err, exportRec.Body.String())
+		}
+		payload := `{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":` + string(env.Data) + `}`
+		importReq := httptest.NewRequest(http.MethodPost, "/api/admin/import", strings.NewReader(payload))
+		importReq.Header.Set("Content-Type", "application/json")
+		importReq.Header.Set("Cookie", "session="+cookie)
+		importRec := httptest.NewRecorder()
+		router.ServeHTTP(importRec, importReq)
+		if importRec.Code != http.StatusOK {
+			t.Fatalf("re-import status = %d, body = %s", importRec.Code, importRec.Body.String())
+		}
+	})
+}
+
 func sessionCookie(rec *httptest.ResponseRecorder) string {
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == "session" {
@@ -1230,7 +1437,7 @@ func TestSecurityEventLogging(t *testing.T) {
 
 	t.Run("import emits event with counts without dump or password", func(t *testing.T) {
 		buf := captureLogOutput(t)
-		body := bytes.NewBufferString(`{"password":"testpass","dump":{"settings":{"site_title":"Logged Title"}}}`)
+		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"settings":{"site_title":"Logged Title"},"replace_work":true,"replace_studio":true,"replace_resume":true}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Cookie", "session="+cookie)
@@ -1244,8 +1451,14 @@ func TestSecurityEventLogging(t *testing.T) {
 		if !strings.Contains(logOut, "security event=import") {
 			t.Fatalf("log = %q, want import event", logOut)
 		}
-		if !strings.Contains(logOut, "pages_upserted=") || !strings.Contains(logOut, "work_created=") {
-			t.Fatalf("log = %q, want import count fields", logOut)
+		for _, field := range []string{
+			"settings_upserted=", "pages_upserted=", "work_created=",
+			"studio_created=", "sections_created=", "entries_created=",
+			"replace_work=true", "replace_studio=true", "replace_resume=true",
+		} {
+			if !strings.Contains(logOut, field) {
+				t.Fatalf("log = %q, want %q", logOut, field)
+			}
 		}
 		assertLogNoSecrets(t, logOut, "testpass")
 		assertLogNoSecrets(t, logOut, cookie)

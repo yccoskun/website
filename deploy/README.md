@@ -86,7 +86,7 @@ security event=<name> ip=<ip> [<key>=<value> ...]
 | `login_failure` | Failed admin login | — |
 | `rate_limit` | Login throttle hit (429) | — |
 | `export` | Successful content export | — |
-| `import` | Successful content import | `pages_upserted`, `work_created` |
+| `import` | Successful content import | `settings_upserted`, `pages_upserted`, `work_created`, `studio_created`, `sections_created`, `entries_created`, `replace_work`, `replace_studio`, `replace_resume` |
 | `media_delete` | Media item deleted | `id` |
 
 Successful admin login is **not** logged — there is no `login_success` event.
@@ -94,11 +94,18 @@ Successful admin login is **not** logged — there is no `login_success` event.
 Example:
 
 ```
-security event=import ip=203.0.113.5 pages_upserted=12 work_created=3
+security event=import ip=203.0.113.5 settings_upserted=4 pages_upserted=12 work_created=3 studio_created=2 sections_created=5 entries_created=18 replace_work=true replace_studio=true replace_resume=true
 ```
 
 Logs **never** include usernames, passwords, session tokens, or full export/import
 payloads — only event metadata and counts.
+
+Content import JSON is **trusted admin input**: only authenticated admins who complete
+the password step-up (T7) may submit it. Treat dumps like credentials — do not paste
+untrusted third-party JSON. Residual XSS/injection risk in stored CMS fields is
+accepted for the single operator. Destructive list replace requires both dump
+`replace_work` / `replace_studio` / `replace_resume` **and** matching request
+`confirm_replace_*` flags; password step-up remains required for every import.
 
 ### What to alert or investigate
 

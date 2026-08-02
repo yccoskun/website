@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -484,12 +485,16 @@ type exportRequest struct {
 }
 
 type importRequest struct {
-	Password string                 `json:"password"`
-	Dump     services.ContentImport `json:"dump"`
+	Password             string          `json:"password"`
+	ConfirmReplaceWork   bool            `json:"confirm_replace_work"`
+	ConfirmReplaceStudio bool            `json:"confirm_replace_studio"`
+	ConfirmReplaceResume bool            `json:"confirm_replace_resume"`
+	Dump                 json.RawMessage `json:"dump"`
 }
 
 // AdminImport serves POST /api/admin/import.
-// Body: { "password": "...", "dump": <ContentImport> }. Requires password step-up.
+// Body: { "password": "...", "confirm_replace_*": bool, "dump": <ContentImport> }.
+// Requires password step-up. Destructive list replace also requires matching confirm flags.
 func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	raw, err := io.ReadAll(r.Body)
@@ -497,14 +502,43 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		writeBodyError(w, err, "invalid body")
 		return
 	}
+
 	var body importRequest
-	if err := json.Unmarshal(raw, &body); err != nil {
+	envDec := json.NewDecoder(bytes.NewReader(raw))
+	envDec.DisallowUnknownFields()
+	if err := envDec.Decode(&body); err != nil {
 		writeBodyError(w, err, "invalid json")
 		return
 	}
+	if len(body.Dump) == 0 {
+		response.Error(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	var dump services.ContentImport
+	dumpDec := json.NewDecoder(bytes.NewReader(body.Dump))
+	dumpDec.DisallowUnknownFields()
+	if err := dumpDec.Decode(&dump); err != nil {
+		writeBodyError(w, err, "invalid json")
+		return
+	}
+
 	if !d.confirmAdminPassword(w, body.Password) {
 		return
 	}
+	if dump.ReplaceWork && !body.ConfirmReplaceWork {
+		response.Error(w, http.StatusBadRequest, "replace confirmation required")
+		return
+	}
+	if dump.ReplaceStudio && !body.ConfirmReplaceStudio {
+		response.Error(w, http.StatusBadRequest, "replace confirmation required")
+		return
+	}
+	if dump.ReplaceResume && !body.ConfirmReplaceResume {
+		response.Error(w, http.StatusBadRequest, "replace confirmation required")
+		return
+	}
+
 	importer := &services.ImportService{
 		Settings: d.Settings,
 		Pages:    d.Pages,
@@ -512,14 +546,21 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		Studio:   d.Studio,
 		Resume:   d.Resume,
 	}
-	result, err := importer.Apply(body.Dump)
+	result, err := importer.Apply(dump)
 	if err != nil {
 		mapServiceError(w, err)
 		return
 	}
 	securitylog.Event(securitylog.EventImport, middleware.ClientIP(r),
+		"settings_upserted", fmt.Sprintf("%d", result.SettingsUpserted),
 		"pages_upserted", fmt.Sprintf("%d", result.PagesUpserted),
 		"work_created", fmt.Sprintf("%d", result.WorkCreated),
+		"studio_created", fmt.Sprintf("%d", result.StudioCreated),
+		"sections_created", fmt.Sprintf("%d", result.SectionsCreated),
+		"entries_created", fmt.Sprintf("%d", result.EntriesCreated),
+		"replace_work", fmt.Sprintf("%t", dump.ReplaceWork),
+		"replace_studio", fmt.Sprintf("%t", dump.ReplaceStudio),
+		"replace_resume", fmt.Sprintf("%t", dump.ReplaceResume),
 	)
 	response.JSON(w, http.StatusOK, result)
 }

@@ -8,6 +8,25 @@ import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session"
 import type { OkResponse } from "@/types/admin";
 import type { ImportResult, MediaAsset } from "@/types/cms";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function dumpReplaceFlags(dump: unknown): {
+  replace_work: boolean;
+  replace_studio: boolean;
+  replace_resume: boolean;
+} {
+  if (!isRecord(dump)) {
+    return { replace_work: false, replace_studio: false, replace_resume: false };
+  }
+  return {
+    replace_work: dump.replace_work === true,
+    replace_studio: dump.replace_studio === true,
+    replace_resume: dump.replace_resume === true,
+  };
+}
+
 export function AdminMediaPage() {
   const { onUnauthorized } = useAdminSession();
   const [items, setItems] = useState<MediaAsset[]>([]);
@@ -20,6 +39,9 @@ export function AdminMediaPage() {
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [confirmReplaceWork, setConfirmReplaceWork] = useState(false);
+  const [confirmReplaceStudio, setConfirmReplaceStudio] = useState(false);
+  const [confirmReplaceResume, setConfirmReplaceResume] = useState(false);
 
   useDocumentMeta("Admin · Media", "Upload and manage media assets.");
 
@@ -74,31 +96,62 @@ export function AdminMediaPage() {
       setImportMsg("password confirmation required");
       return;
     }
-    setImporting(true);
     setImportMsg(null);
     let dump: unknown;
     try {
       dump = JSON.parse(importText) as unknown;
     } catch {
       setImportMsg("Invalid JSON");
-      setImporting(false);
       return;
     }
+    const flags = dumpReplaceFlags(dump);
+    if (flags.replace_work && !confirmReplaceWork) {
+      setImportMsg("replace confirmation required for work (check Confirm replace work)");
+      return;
+    }
+    if (flags.replace_studio && !confirmReplaceStudio) {
+      setImportMsg("replace confirmation required for studio (check Confirm replace studio)");
+      return;
+    }
+    if (flags.replace_resume && !confirmReplaceResume) {
+      setImportMsg("replace confirmation required for resume (check Confirm replace resume)");
+      return;
+    }
+    const willReplace =
+      (flags.replace_work && confirmReplaceWork) ||
+      (flags.replace_studio && confirmReplaceStudio) ||
+      (flags.replace_resume && confirmReplaceResume);
+    if (willReplace) {
+      const parts: string[] = [];
+      if (flags.replace_work && confirmReplaceWork) parts.push("work");
+      if (flags.replace_studio && confirmReplaceStudio) parts.push("studio");
+      if (flags.replace_resume && confirmReplaceResume) parts.push("resume");
+      if (!window.confirm(`This import will wipe existing ${parts.join(", ")} lists. Continue?`)) {
+        return;
+      }
+    }
+    setImporting(true);
     void apiPost<ImportResult>("/api/admin/import", {
       password: confirmPassword,
+      confirm_replace_work: confirmReplaceWork,
+      confirm_replace_studio: confirmReplaceStudio,
+      confirm_replace_resume: confirmReplaceResume,
       dump,
     })
       .then((result) => {
         setImporting(false);
         setConfirmPassword("");
+        setConfirmReplaceWork(false);
+        setConfirmReplaceStudio(false);
+        setConfirmReplaceResume(false);
         setImportMsg(
           `Imported: settings ${result.settings_upserted}, pages ${result.pages_upserted}, work ${result.work_created}, studio ${result.studio_created}, sections ${result.sections_created}, entries ${result.entries_created}`,
         );
       })
       .catch((err: unknown) => {
+        setImporting(false);
         if (handleAdminUnauthorized(err, onUnauthorized)) return;
         setImportMsg(err instanceof ApiError ? err.message : "Import failed");
-        setImporting(false);
       });
   }
 
@@ -128,9 +181,9 @@ export function AdminMediaPage() {
         setExportMsg("Downloaded JSON dump. Media files are not included — upload those separately on the target host.");
       })
       .catch((err: unknown) => {
+        setExporting(false);
         if (handleAdminUnauthorized(err, onUnauthorized)) return;
         setExportMsg(err instanceof ApiError ? err.message : "Export failed");
-        setExporting(false);
       });
   }
 
@@ -197,10 +250,16 @@ export function AdminMediaPage() {
         <h2 className="font-display text-xl font-semibold">Content export / import</h2>
         <p className="mt-1 font-mono text-xs text-ink-600 dark:text-ink-400">
           Export local content as JSON, then import on another environment (e.g. production).
-          Media binaries are not included — upload PDF/stills separately and remapping{" "}
+          Media binaries are not included — upload PDF/stills separately and remap{" "}
           <code className="text-ink-700 dark:text-ink-300">pdf_media_id</code> /{" "}
           <code className="text-ink-700 dark:text-ink-300">image_media_id</code> if needed.
           Confirm with your admin password before export or import.
+        </p>
+        <p className="mt-2 font-mono text-xs text-ink-600 dark:text-ink-400">
+          Exported dumps set <code className="text-ink-700 dark:text-ink-300">replace_*=true</code>.
+          Leave the confirm checkboxes unchecked to block a wipe. Password is still required.
+          Import JSON is trusted admin content — do not paste untrusted dumps. Settings and
+          pages upsert without wipe flags.
         </p>
         <label className="mt-3 block max-w-sm">
           <span className="font-mono text-[0.65rem] tracking-[0.18em] text-ink-600 uppercase dark:text-ink-400">
@@ -215,6 +274,35 @@ export function AdminMediaPage() {
             className="mt-1.5 w-full rounded-chip border border-ink-200 bg-paper px-2.5 py-1.5 font-mono text-sm text-ink-900 outline-none focus:border-ember-600 dark:border-ink-800 dark:bg-ink-950 dark:text-ink-200 dark:focus:border-ember-400"
           />
         </label>
+        <div className="mt-3 flex flex-col gap-1.5">
+          <label className="flex items-center gap-2 font-mono text-[0.65rem] tracking-[0.12em] text-ink-600 uppercase dark:text-ink-400">
+            <input
+              type="checkbox"
+              checked={confirmReplaceWork}
+              onChange={(e) => setConfirmReplaceWork(e.target.checked)}
+              className="size-3.5 accent-ember-600"
+            />
+            Confirm replace work
+          </label>
+          <label className="flex items-center gap-2 font-mono text-[0.65rem] tracking-[0.12em] text-ink-600 uppercase dark:text-ink-400">
+            <input
+              type="checkbox"
+              checked={confirmReplaceStudio}
+              onChange={(e) => setConfirmReplaceStudio(e.target.checked)}
+              className="size-3.5 accent-ember-600"
+            />
+            Confirm replace studio
+          </label>
+          <label className="flex items-center gap-2 font-mono text-[0.65rem] tracking-[0.12em] text-ink-600 uppercase dark:text-ink-400">
+            <input
+              type="checkbox"
+              checked={confirmReplaceResume}
+              onChange={(e) => setConfirmReplaceResume(e.target.checked)}
+              className="size-3.5 accent-ember-600"
+            />
+            Confirm replace resume
+          </label>
+        </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
