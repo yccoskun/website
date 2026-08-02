@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/database"
 	"github.com/yccoskun/website/internal/services"
 )
@@ -52,7 +53,7 @@ func TestRequireSessionRejectsDisallowedSecFetchSite(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
 			if tc.cookie {
-				req.AddCookie(&http.Cookie{Name: "session", Value: token})
+				req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
 			}
 			req.Header.Set("Sec-Fetch-Site", tc.site)
 			rec := httptest.NewRecorder()
@@ -90,7 +91,7 @@ func TestRequireSessionAllowsSameOriginAndMissing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
-			req.AddCookie(&http.Cookie{Name: "session", Value: token})
+			req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: token})
 			if tc.site != "" {
 				req.Header.Set("Sec-Fetch-Site", tc.site)
 			}

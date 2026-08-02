@@ -14,7 +14,12 @@ import (
 const maxUsernameLength = 256
 
 // SessionCookieName is the HTTP cookie that carries the raw session token.
-const SessionCookieName = "session"
+// The __Host- prefix requires Secure, Path=/, and no Domain attribute.
+const SessionCookieName = "__Host-session"
+
+// legacySessionCookieName is the pre-migration cookie name. It is cleared on
+// login/logout but never read for authentication.
+const legacySessionCookieName = "session"
 
 // ConstantTimeUsernameEqual reports whether two usernames match without leaking
 // timing information via early returns on content (over-max inputs return false).
@@ -47,7 +52,8 @@ func CheckPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-// SetSessionCookie writes the session cookie on the response.
+// SetSessionCookie writes the session cookie on the response and clears any
+// legacy "session" cookie so browsers drop the old name after migration.
 // SameSite=Lax blocks cross-site POSTs. Authenticated admin APIs also reject
 // Sec-Fetch-Site: cross-site; sensitive export is POST-only.
 func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string, expires time.Time) {
@@ -57,12 +63,13 @@ func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string, expi
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   cookieSecure(r),
+		Secure:   true,
 		Expires:  expires,
 	})
+	clearLegacySessionCookie(w, r)
 }
 
-// ClearSessionCookie expires the session cookie.
+// ClearSessionCookie expires the session cookie and the legacy "session" cookie.
 func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
@@ -70,13 +77,30 @@ func ClearSessionCookie(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   cookieSecure(r),
+		Secure:   true,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0).UTC(),
+	})
+	clearLegacySessionCookie(w, r)
+}
+
+func clearLegacySessionCookie(w http.ResponseWriter, r *http.Request) {
+	// Match Secure to how the legacy cookie may have been stored (non-Secure on
+	// loopback) so browsers reliably delete it.
+	http.SetCookie(w, &http.Cookie{
+		Name:     legacySessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   legacyCookieSecure(r),
 		MaxAge:   -1,
 		Expires:  time.Unix(0, 0).UTC(),
 	})
 }
 
 // SessionToken reads the raw session token from the request cookie.
+// Only __Host-session is accepted; the legacy "session" name never authenticates.
 func SessionToken(r *http.Request) string {
 	c, err := r.Cookie(SessionCookieName)
 	if err != nil {
@@ -85,7 +109,10 @@ func SessionToken(r *http.Request) string {
 	return c.Value
 }
 
-func cookieSecure(r *http.Request) bool {
+// legacyCookieSecure reports whether the legacy "session" cookie should use the
+// Secure attribute when clearing, matching the host-based rule used before the
+// __Host- migration so loopback non-Secure cookies still get deleted.
+func legacyCookieSecure(r *http.Request) bool {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h

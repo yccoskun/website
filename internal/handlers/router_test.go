@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/config"
 	"github.com/yccoskun/website/internal/database"
 	"github.com/yccoskun/website/internal/services"
@@ -218,7 +219,7 @@ func TestSitemapIncludesPublishedPost(t *testing.T) {
 	)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Cookie", "session="+cookie)
+	createReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	createRec := httptest.NewRecorder()
 	router.ServeHTTP(createRec, createReq)
 	if createRec.Code != http.StatusCreated {
@@ -273,7 +274,7 @@ func TestAdminCreatePostRejectsBadSlug(t *testing.T) {
 	)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Cookie", "session="+cookie)
+	createReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	createRec := httptest.NewRecorder()
 	router.ServeHTTP(createRec, createReq)
 	if createRec.Code != http.StatusBadRequest {
@@ -316,7 +317,7 @@ func TestUnpublishedPostHiddenFromFeeds(t *testing.T) {
 	)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Cookie", "session="+cookie)
+	createReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	createRec := httptest.NewRecorder()
 	router.ServeHTTP(createRec, createReq)
 	if createRec.Code != http.StatusCreated {
@@ -420,7 +421,7 @@ func TestLoginCookieAndAdminList(t *testing.T) {
 	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
-	listReq.Header.Set("Cookie", "session="+cookie)
+	listReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	listRec := httptest.NewRecorder()
 	router.ServeHTTP(listRec, listReq)
 	assertEnvelope(t, listRec, http.StatusOK, `{"data":[],"error":null}`)
@@ -458,6 +459,9 @@ func TestLoginCookie_publicHostIsSecure(t *testing.T) {
 	if found == nil {
 		t.Fatal("expected session cookie")
 	}
+	if found.Name != auth.SessionCookieName {
+		t.Errorf("cookie name = %q, want %q", found.Name, auth.SessionCookieName)
+	}
 	if !found.HttpOnly {
 		t.Error("expected HttpOnly=true")
 	}
@@ -467,9 +471,18 @@ func TestLoginCookie_publicHostIsSecure(t *testing.T) {
 	if !found.Secure {
 		t.Error("expected Secure=true for public Host")
 	}
+	if found.Path != "/" {
+		t.Errorf("Path = %q, want /", found.Path)
+	}
+	if found.Domain != "" {
+		t.Errorf("Domain = %q, want empty", found.Domain)
+	}
+	if !legacySessionCleared(loginRec) {
+		t.Fatalf("expected legacy session cookie clear, Set-Cookie = %v", loginRec.Header().Values("Set-Cookie"))
+	}
 }
 
-func TestLoginCookie_localhostIsNotSecure(t *testing.T) {
+func TestLoginCookie_localhostIsSecure(t *testing.T) {
 	db := openTestDB(t)
 	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
 	if err != nil {
@@ -483,12 +496,57 @@ func TestLoginCookie_localhostIsNotSecure(t *testing.T) {
 
 	loginRec := loginWithHost(t, router, "localhost")
 
-	setCookie := loginRec.Header().Get("Set-Cookie")
-	if setCookie == "" {
-		t.Fatal("expected Set-Cookie header")
+	found := sessionCookieFull(loginRec)
+	if found == nil {
+		t.Fatal("expected session cookie")
 	}
-	if strings.Contains(setCookie, "Secure") {
-		t.Fatalf("Set-Cookie = %q, want no Secure attribute on loopback Host", setCookie)
+	if found.Name != auth.SessionCookieName {
+		t.Errorf("cookie name = %q, want %q", found.Name, auth.SessionCookieName)
+	}
+	if !found.Secure {
+		t.Error("expected Secure=true for localhost (__Host- requirement)")
+	}
+	if found.Path != "/" {
+		t.Errorf("Path = %q, want /", found.Path)
+	}
+	if found.Domain != "" {
+		t.Errorf("Domain = %q, want empty", found.Domain)
+	}
+	if !legacySessionCleared(loginRec) {
+		t.Fatalf("expected legacy session cookie clear, Set-Cookie = %v", loginRec.Header().Values("Set-Cookie"))
+	}
+}
+
+func TestAdminMe_legacySessionCookieRejected(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginRec := loginWithHost(t, router, "localhost")
+	token := sessionCookie(loginRec)
+	if token == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	legacyReq := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	legacyReq.Header.Set("Cookie", "session="+token)
+	legacyRec := httptest.NewRecorder()
+	router.ServeHTTP(legacyRec, legacyReq)
+	assertEnvelope(t, legacyRec, http.StatusUnauthorized, `{"data":null,"error":"unauthorized"}`)
+
+	hostReq := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	hostReq.Header.Set("Cookie", auth.SessionCookieName+"="+token)
+	hostRec := httptest.NewRecorder()
+	router.ServeHTTP(hostRec, hostReq)
+	if hostRec.Code != http.StatusOK {
+		t.Fatalf("me with %s status = %d, body = %s", auth.SessionCookieName, hostRec.Code, hostRec.Body.String())
 	}
 }
 
@@ -529,7 +587,7 @@ func TestAdminPreviewWithSessionReturnsHTML(t *testing.T) {
 	previewBody := bytes.NewBufferString(`{"content_md":"# Hi"}`)
 	previewReq := httptest.NewRequest(http.MethodPost, "/api/admin/preview", previewBody)
 	previewReq.Header.Set("Content-Type", "application/json")
-	previewReq.Header.Set("Cookie", "session="+cookie)
+	previewReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	previewRec := httptest.NewRecorder()
 	router.ServeHTTP(previewRec, previewReq)
 	if previewRec.Code != http.StatusOK {
@@ -559,13 +617,14 @@ func TestLogoutWithoutCookieReturns200(t *testing.T) {
 	assertEnvelope(t, rec, http.StatusOK, `{"data":{"ok":true},"error":null}`)
 	cleared := false
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == "session" && c.MaxAge < 0 {
+		if c.Name == auth.SessionCookieName && c.MaxAge < 0 {
 			cleared = true
 		}
 	}
 	if !cleared {
+		prefix := auth.SessionCookieName + "="
 		for _, h := range rec.Header().Values("Set-Cookie") {
-			if strings.HasPrefix(h, "session=") &&
+			if strings.HasPrefix(h, prefix) &&
 				(strings.Contains(h, "Max-Age=0") || strings.Contains(h, "Max-Age=-1")) {
 				cleared = true
 			}
@@ -573,6 +632,9 @@ func TestLogoutWithoutCookieReturns200(t *testing.T) {
 	}
 	if !cleared {
 		t.Fatalf("expected session cookie clear, Set-Cookie = %v", rec.Header().Values("Set-Cookie"))
+	}
+	if !legacySessionCleared(rec) {
+		t.Fatalf("expected legacy session cookie clear, Set-Cookie = %v", rec.Header().Values("Set-Cookie"))
 	}
 }
 
@@ -603,7 +665,7 @@ func TestUnpublishedPostHiddenFromPublicAPI(t *testing.T) {
 	)
 	createReq := httptest.NewRequest(http.MethodPost, "/api/admin/posts", createBody)
 	createReq.Header.Set("Content-Type", "application/json")
-	createReq.Header.Set("Cookie", "session="+cookie)
+	createReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	createRec := httptest.NewRecorder()
 	router.ServeHTTP(createRec, createReq)
 	if createRec.Code != http.StatusCreated {
@@ -692,7 +754,7 @@ func TestCMSPublicAndAdminSettings(t *testing.T) {
 	putBody := bytes.NewBufferString(`{"settings":{"site_name":"CMS Test","rss_title":"CMS RSS"}}`)
 	putReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings", putBody)
 	putReq.Header.Set("Content-Type", "application/json")
-	putReq.Header.Set("Cookie", "session="+cookie)
+	putReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	putRec := httptest.NewRecorder()
 	router.ServeHTTP(putRec, putReq)
 	if putRec.Code != http.StatusOK {
@@ -702,7 +764,7 @@ func TestCMSPublicAndAdminSettings(t *testing.T) {
 	workBody := bytes.NewBufferString(`{"name":"demo","one_liner":"x","body":"y","stack":["Go"],"status":"WIP","href":"https://example.com","sort_order":1}`)
 	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
 	workReq.Header.Set("Content-Type", "application/json")
-	workReq.Header.Set("Cookie", "session="+cookie)
+	workReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	workRec := httptest.NewRecorder()
 	router.ServeHTTP(workRec, workReq)
 	if workRec.Code != http.StatusCreated {
@@ -747,7 +809,7 @@ func TestCMSRejectsDangerousURLs(t *testing.T) {
 	workBody := bytes.NewBufferString(`{"name":"demo","href":"javascript:alert(1)","sort_order":1}`)
 	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
 	workReq.Header.Set("Content-Type", "application/json")
-	workReq.Header.Set("Cookie", "session="+cookie)
+	workReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	workRec := httptest.NewRecorder()
 	router.ServeHTTP(workRec, workReq)
 	if workRec.Code != http.StatusBadRequest {
@@ -757,7 +819,7 @@ func TestCMSRejectsDangerousURLs(t *testing.T) {
 	navBody := bytes.NewBufferString(`{"settings":{"nav":"[{\"label\":\"X\",\"path\":\"//evil.com\"}]"}}`)
 	navReq := httptest.NewRequest(http.MethodPut, "/api/admin/settings", navBody)
 	navReq.Header.Set("Content-Type", "application/json")
-	navReq.Header.Set("Cookie", "session="+cookie)
+	navReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	navRec := httptest.NewRecorder()
 	router.ServeHTTP(navRec, navReq)
 	if navRec.Code != http.StatusBadRequest {
@@ -779,7 +841,7 @@ func TestAdminAPISecFetchSite(t *testing.T) {
 
 	t.Run("cross-site forbidden", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -792,7 +854,7 @@ func TestAdminAPISecFetchSite(t *testing.T) {
 
 	t.Run("same-origin allowed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -801,7 +863,7 @@ func TestAdminAPISecFetchSite(t *testing.T) {
 
 	t.Run("missing Sec-Fetch-Site allowed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusOK, `{"data":[],"error":null}`)
@@ -837,7 +899,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -855,7 +917,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -870,7 +932,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"wrong"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -885,7 +947,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"dump":{}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -900,7 +962,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"wrong","dump":{}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -915,7 +977,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"settings":{}}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -925,7 +987,7 @@ func TestAdminExportCSRF(t *testing.T) {
 
 	t.Run("GET export gone", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/admin/export", nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code == http.StatusOK {
@@ -952,7 +1014,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -963,7 +1025,7 @@ func TestAdminExportCSRF(t *testing.T) {
 
 	t.Run("after logout export and import unauthorized", func(t *testing.T) {
 		logoutReq := httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil)
-		logoutReq.Header.Set("Cookie", "session="+cookie)
+		logoutReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		logoutRec := httptest.NewRecorder()
 		router.ServeHTTP(logoutRec, logoutReq)
 		if logoutRec.Code != http.StatusOK {
@@ -973,7 +1035,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		exportBody := bytes.NewBufferString(`{"password":"testpass"}`)
 		exportReq := httptest.NewRequest(http.MethodPost, "/api/admin/export", exportBody)
 		exportReq.Header.Set("Content-Type", "application/json")
-		exportReq.Header.Set("Cookie", "session="+cookie)
+		exportReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		exportRec := httptest.NewRecorder()
 		router.ServeHTTP(exportRec, exportReq)
 		if exportRec.Code != http.StatusUnauthorized {
@@ -983,7 +1045,7 @@ func TestAdminExportCSRF(t *testing.T) {
 		importBody := bytes.NewBufferString(`{"password":"testpass","dump":{}}`)
 		importReq := httptest.NewRequest(http.MethodPost, "/api/admin/import", importBody)
 		importReq.Header.Set("Content-Type", "application/json")
-		importReq.Header.Set("Cookie", "session="+cookie)
+		importReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		importRec := httptest.NewRecorder()
 		router.ServeHTTP(importRec, importReq)
 		if importRec.Code != http.StatusUnauthorized {
@@ -1008,7 +1070,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 	workBody := bytes.NewBufferString(`{"name":"keep-me","one_liner":"x","body":"","stack":[],"status":"shipped","href":"https://example.com","sort_order":1}`)
 	workReq := httptest.NewRequest(http.MethodPost, "/api/admin/work", workBody)
 	workReq.Header.Set("Content-Type", "application/json")
-	workReq.Header.Set("Cookie", "session="+cookie)
+	workReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	workRec := httptest.NewRecorder()
 	router.ServeHTTP(workRec, workReq)
 	if workRec.Code != http.StatusCreated {
@@ -1018,7 +1080,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 	studioBody := bytes.NewBufferString(`{"slug":"keep-studio","title":"Keep Studio","year":"2024","medium":"print","caption":"c","sort_order":1,"published":true}`)
 	studioReq := httptest.NewRequest(http.MethodPost, "/api/admin/studio", studioBody)
 	studioReq.Header.Set("Content-Type", "application/json")
-	studioReq.Header.Set("Cookie", "session="+cookie)
+	studioReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	studioRec := httptest.NewRecorder()
 	router.ServeHTTP(studioRec, studioReq)
 	if studioRec.Code != http.StatusCreated {
@@ -1028,7 +1090,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 	secBody := bytes.NewBufferString(`{"kind":"experience","title":"Keep Section","sort_order":1,"accordion":false}`)
 	secReq := httptest.NewRequest(http.MethodPost, "/api/admin/resume/sections", secBody)
 	secReq.Header.Set("Content-Type", "application/json")
-	secReq.Header.Set("Cookie", "session="+cookie)
+	secReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	secRec := httptest.NewRecorder()
 	router.ServeHTTP(secRec, secReq)
 	if secRec.Code != http.StatusCreated {
@@ -1039,7 +1101,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_work":true,"work":[]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1060,7 +1122,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_studio":true,"studio":[]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1081,7 +1143,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"replace_resume":true,"resume_sections":[],"resume_entries":[]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1092,7 +1154,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		}
 
 		listReq := httptest.NewRequest(http.MethodGet, "/api/admin/resume/sections", nil)
-		listReq.Header.Set("Cookie", "session="+cookie)
+		listReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		listRec := httptest.NewRecorder()
 		router.ServeHTTP(listRec, listReq)
 		if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), "Keep Section") {
@@ -1104,7 +1166,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"replace_work":true,"replace_studio":true,"replace_resume":true,"work":[{"name":"imported","one_liner":"y","body":"","stack":[],"status":"shipped","href":"https://example.com/imported","sort_order":1}]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -1129,7 +1191,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"work":[{"name":"evil","one_liner":"","body":"","stack":[],"status":"","href":"javascript:alert(1)","sort_order":1}]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1144,7 +1206,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","evil":true,"dump":{}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
@@ -1154,7 +1216,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"not_a_field":1}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
@@ -1164,7 +1226,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","dump":{"work":[{"name":"x","one_liner":"","body":"","stack":[],"status":"","href":"https://example.com","sort_order":1,"evil":1}]}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid json"}`)
@@ -1174,7 +1236,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		exportBody := bytes.NewBufferString(`{"password":"testpass"}`)
 		exportReq := httptest.NewRequest(http.MethodPost, "/api/admin/export", exportBody)
 		exportReq.Header.Set("Content-Type", "application/json")
-		exportReq.Header.Set("Cookie", "session="+cookie)
+		exportReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		exportRec := httptest.NewRecorder()
 		router.ServeHTTP(exportRec, exportReq)
 		if exportRec.Code != http.StatusOK {
@@ -1189,7 +1251,7 @@ func TestAdminImportIntegrity(t *testing.T) {
 		payload := `{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":` + string(env.Data) + `}`
 		importReq := httptest.NewRequest(http.MethodPost, "/api/admin/import", strings.NewReader(payload))
 		importReq.Header.Set("Content-Type", "application/json")
-		importReq.Header.Set("Cookie", "session="+cookie)
+		importReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		importRec := httptest.NewRecorder()
 		router.ServeHTTP(importRec, importReq)
 		if importRec.Code != http.StatusOK {
@@ -1202,10 +1264,11 @@ func sessionCookie(rec *httptest.ResponseRecorder) string {
 	if c := sessionCookieFull(rec); c != nil {
 		return c.Value
 	}
+	prefix := auth.SessionCookieName + "="
 	for _, h := range rec.Header().Values("Set-Cookie") {
-		if strings.HasPrefix(h, "session=") {
+		if strings.HasPrefix(h, prefix) {
 			part := strings.SplitN(h, ";", 2)[0]
-			return strings.TrimPrefix(part, "session=")
+			return strings.TrimPrefix(part, prefix)
 		}
 	}
 	return ""
@@ -1215,11 +1278,26 @@ func sessionCookie(rec *httptest.ResponseRecorder) string {
 // HttpOnly/SameSite/Secure) from a response, or nil if not present.
 func sessionCookieFull(rec *httptest.ResponseRecorder) *http.Cookie {
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == "session" {
+		if c.Name == auth.SessionCookieName {
 			return c
 		}
 	}
 	return nil
+}
+
+func legacySessionCleared(rec *httptest.ResponseRecorder) bool {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" && c.MaxAge < 0 {
+			return true
+		}
+	}
+	for _, h := range rec.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(h, "session=") &&
+			(strings.Contains(h, "Max-Age=0") || strings.Contains(h, "Max-Age=-1")) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMediaAccessControl(t *testing.T) {
@@ -1447,7 +1525,7 @@ func TestMediaAccessControl(t *testing.T) {
 
 	t.Run("admin session draft media 200 private", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(draftAsset.ID, 10), nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -1461,7 +1539,7 @@ func TestMediaAccessControl(t *testing.T) {
 
 	t.Run("admin list upload delete", func(t *testing.T) {
 		listReq := httptest.NewRequest(http.MethodGet, "/api/admin/media", nil)
-		listReq.Header.Set("Cookie", "session="+cookie)
+		listReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		listRec := httptest.NewRecorder()
 		router.ServeHTTP(listRec, listReq)
 		if listRec.Code != http.StatusOK {
@@ -1485,7 +1563,7 @@ func TestMediaAccessControl(t *testing.T) {
 		}
 		upReq := httptest.NewRequest(http.MethodPost, "/api/admin/media", &buf)
 		upReq.Header.Set("Content-Type", mw.FormDataContentType())
-		upReq.Header.Set("Cookie", "session="+cookie)
+		upReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		upRec := httptest.NewRecorder()
 		router.ServeHTTP(upRec, upReq)
 		if upRec.Code != http.StatusCreated {
@@ -1507,7 +1585,7 @@ func TestMediaAccessControl(t *testing.T) {
 		}
 
 		delReq := httptest.NewRequest(http.MethodDelete, "/api/admin/media/"+strconv.FormatInt(uploadedID, 10), nil)
-		delReq.Header.Set("Cookie", "session="+cookie)
+		delReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		delRec := httptest.NewRecorder()
 		router.ServeHTTP(delRec, delReq)
 		if delRec.Code != http.StatusOK {
@@ -1621,7 +1699,7 @@ func TestSecurityEventLogging(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.RemoteAddr = "203.0.113.51:12345"
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -1644,7 +1722,7 @@ func TestSecurityEventLogging(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"wrong"}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/export", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -1658,7 +1736,7 @@ func TestSecurityEventLogging(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"testpass","confirm_replace_work":true,"confirm_replace_studio":true,"confirm_replace_resume":true,"dump":{"settings":{"site_title":"Logged Title"},"replace_work":true,"replace_studio":true,"replace_resume":true}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.RemoteAddr = "203.0.113.52:12345"
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -1689,7 +1767,7 @@ func TestSecurityEventLogging(t *testing.T) {
 		body := bytes.NewBufferString(`{"password":"wrong","dump":{}}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusForbidden {
@@ -1703,7 +1781,7 @@ func TestSecurityEventLogging(t *testing.T) {
 		body := bytes.NewBufferString(`not-json`)
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1726,7 +1804,7 @@ func TestSecurityEventLogging(t *testing.T) {
 
 		buf := captureLogOutput(t)
 		req := httptest.NewRequest(http.MethodDelete, "/api/admin/media/"+strconv.FormatInt(asset.ID, 10), nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		req.RemoteAddr = "203.0.113.53:12345"
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -1747,7 +1825,7 @@ func TestSecurityEventLogging(t *testing.T) {
 	t.Run("delete missing media does not emit media_delete event", func(t *testing.T) {
 		buf := captureLogOutput(t)
 		req := httptest.NewRequest(http.MethodDelete, "/api/admin/media/999999", nil)
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
@@ -1801,7 +1879,7 @@ func TestOversizedJSONBodyReturns413(t *testing.T) {
 	payload := `{"slug":"` + strings.Repeat("a", 1<<20) + `","title":"t","summary":"s","content_md":"c","published":false}`
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/posts", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "session="+cookie)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1824,7 +1902,7 @@ func TestOversizedImportBodyReturns413(t *testing.T) {
 	body := strings.NewReader(strings.Repeat("x", 8<<20+1))
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/import", body)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "session="+cookie)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1878,7 +1956,7 @@ func TestOversizedMultipartUploadSafeError(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/media", pr)
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Cookie", "session="+cookie)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
@@ -1909,7 +1987,7 @@ func TestMalformedMultipartOrMissingFileReturns400(t *testing.T) {
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/media", &buf)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"file field required"}`)
@@ -1919,7 +1997,7 @@ func TestMalformedMultipartOrMissingFileReturns400(t *testing.T) {
 	t.Run("malformed multipart", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/media", strings.NewReader("not-a-multipart-body"))
 		req.Header.Set("Content-Type", "multipart/form-data; boundary=----bound")
-		req.Header.Set("Cookie", "session="+cookie)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -1960,7 +2038,7 @@ func TestInvalidPostIDReturns400(t *testing.T) {
 	cookie := loginTestAdmin(t, router)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/admin/posts/abc", nil)
-	req.Header.Set("Cookie", "session="+cookie)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	assertEnvelope(t, rec, http.StatusBadRequest, `{"data":null,"error":"invalid id"}`)

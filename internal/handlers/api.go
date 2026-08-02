@@ -183,6 +183,8 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 
 // AdminLogout serves POST /api/admin/logout.
 // Always clears the cookie and returns 200; destroys the session when present.
+// Only __Host-session is destroyed in the DB; a leftover legacy "session" cookie
+// is cleared from the jar but its DB row expires via TTL if never migrated.
 func (d Deps) AdminLogout(w http.ResponseWriter, r *http.Request) {
 	if d.Sessions != nil {
 		if err := d.Sessions.Destroy(auth.SessionToken(r)); err != nil {

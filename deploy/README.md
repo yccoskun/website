@@ -179,10 +179,15 @@ cookies (see `internal/auth/`, `internal/services/sessions.go`):
       chars). The database stores only the SHA-256 hash of the token
       (`token_hash` column); the raw token exists solely in the session
       cookie sent to the browser.
-- [ ] **Cookie flags** — `HttpOnly` always set; `SameSite=Lax` always set;
-      `Secure` is set for every public Hostname, including tunnel/proxy
-      hostnames (e.g. `*.trycloudflare.com`), and is only skipped for
-      loopback Hosts (`localhost`, `127.0.0.1`, `::1`) used in local dev.
+- [ ] **Cookie flags** — name `__Host-session` with `HttpOnly`, `SameSite=Lax`,
+      `Secure` always, `Path=/`, and no `Domain` attribute (OWASP `__Host-`
+      requirements). Legacy `session` is cleared on login/logout and is never
+      read for authentication. After deploy, browsers still holding only the
+      old `session` cookie get 401 until re-login (login clears the legacy name).
+      Locally, open the Vite app as `http://localhost` (not a LAN IP): browsers
+      treat `localhost` as a secure context, so `Secure`/`__Host-` works over
+      plain HTTP; LAN IPs over HTTP will not store the cookie. Public traffic
+      always arrives over HTTPS via Cloudflare/tunnel.
 - [ ] **Auth model** — sessions are opaque, server-side, and validated by
       hash lookup. No JWT or other self-contained/stateless token format.
 - [ ] **Env file** — `/etc/website.env` stays mode `0640`, owned
