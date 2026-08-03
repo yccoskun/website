@@ -638,6 +638,204 @@ func TestLogoutWithoutCookieReturns200(t *testing.T) {
 	}
 }
 
+func TestSessionBindingLoginThenMe(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+		SessionBinding:    true,
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("User-Agent", "BindingTest/1.0")
+	loginReq.RemoteAddr = "127.0.0.1:4242"
+	loginReq.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie after login")
+	}
+
+	t.Run("same hints ok", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("User-Agent", "BindingTest/1.0")
+		req.RemoteAddr = "127.0.0.1:4242"
+		req.Header.Set("CF-Connecting-IP", "198.51.100.99")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("me status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("spoofed UA reauth", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("User-Agent", "Spoofed/9.0")
+		req.RemoteAddr = "127.0.0.1:4242"
+		req.Header.Set("CF-Connecting-IP", "198.51.100.10")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusUnauthorized, `{"data":null,"error":"reauth_required"}`)
+	})
+}
+
+func TestSessionBindingSpoofedIPAfterLogin(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+		SessionBinding:    true,
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("User-Agent", "BindingTest/1.0")
+	loginReq.RemoteAddr = "127.0.0.1:4242"
+	loginReq.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := sessionCookie(loginRec)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+	req.Header.Set("User-Agent", "BindingTest/1.0")
+	req.RemoteAddr = "127.0.0.1:4242"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.1")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	assertEnvelope(t, rec, http.StatusUnauthorized, `{"data":null,"error":"reauth_required"}`)
+}
+
+func TestSessionBindingLoginRejectsEmptyUA(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+		SessionBinding:    true,
+	}
+	router := newIntegrationRouter(t, db, cfg)
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	// Intentionally no User-Agent — fail closed when binding is on.
+	loginReq.RemoteAddr = "127.0.0.1:4242"
+	loginReq.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusBadRequest {
+		t.Fatalf("login status = %d, want 400; body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("sessions = %d, want 0 (no unbound session)", n)
+	}
+}
+
+func TestSessionBindingProtectedMediaMismatch(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+		SessionBinding:    true,
+	}
+	uploads := filepath.Join(t.TempDir(), "uploads")
+	media, err := services.NewMediaService(db, uploads)
+	if err != nil {
+		t.Fatalf("media: %v", err)
+	}
+	pages := services.NewPageService(db)
+	spa := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := NewRouter(spa, Deps{
+		Posts:    services.NewPostService(db),
+		Resume:   services.NewResumeService(db).WithPages(pages, media),
+		Sessions: services.NewSessionService(db),
+		Settings: services.NewSettingsService(db),
+		Pages:    pages,
+		Work:     services.NewWorkService(db),
+		Studio:   services.NewStudioService(db),
+		Media:    media,
+		Config:   cfg,
+	})
+
+	png := []byte("\x89PNG\r\n\x1a\n")
+	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("orphan: %v", err)
+	}
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("User-Agent", "BindingTest/1.0")
+	loginReq.RemoteAddr = "127.0.0.1:4242"
+	loginReq.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := sessionCookie(loginRec)
+
+	req := httptest.NewRequest(http.MethodGet, "/media/"+strconv.FormatInt(orphan.ID, 10), nil)
+	req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+	req.Header.Set("User-Agent", "Spoofed/9.0")
+	req.RemoteAddr = "127.0.0.1:4242"
+	req.Header.Set("CF-Connecting-IP", "198.51.100.10")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	assertEnvelope(t, rec, http.StatusUnauthorized, `{"data":null,"error":"reauth_required"}`)
+
+	cleared := false
+	for _, h := range rec.Header().Values("Set-Cookie") {
+		c, err := http.ParseSetCookie(h)
+		if err != nil {
+			continue
+		}
+		if c.Name == auth.SessionCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatalf("expected session cookie cleared, Set-Cookie = %v", rec.Header().Values("Set-Cookie"))
+	}
+}
+
 func TestUnpublishedPostHiddenFromPublicAPI(t *testing.T) {
 	db := openTestDB(t)
 	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)

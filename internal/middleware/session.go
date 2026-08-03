@@ -6,6 +6,7 @@ import (
 
 	"github.com/yccoskun/website/internal/auth"
 	"github.com/yccoskun/website/internal/response"
+	"github.com/yccoskun/website/internal/securitylog"
 	"github.com/yccoskun/website/internal/services"
 )
 
@@ -30,7 +31,11 @@ func allowedSecFetchSite(site string) bool {
 // (including cross-site) yields 403 before session validation. Export and
 // other requireAuth routes share this check; there is no second Sec-Fetch
 // wrapper on export. Login and logout are not wrapped by RequireSession.
-func RequireSession(sessions *services.SessionService, next http.Handler) http.Handler {
+//
+// When bindingEnabled is true and the session was created with both UA and
+// IP-prefix hashes, a mismatch destroys the session, clears the cookie, and
+// returns 401 with message reauth_required.
+func RequireSession(sessions *services.SessionService, bindingEnabled bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Authenticated admin JSON must not be stored by shared caches.
 		w.Header().Set("Cache-Control", "private, no-store")
@@ -42,9 +47,17 @@ func RequireSession(sessions *services.SessionService, next http.Handler) http.H
 			response.Error(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		ok, err := sessions.Validate(auth.SessionToken(r))
+		token := auth.SessionToken(r)
+		ok, mismatch, err := sessions.Validate(token, r.UserAgent(), ClientIP(r), bindingEnabled)
 		if err != nil {
 			response.Error(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if mismatch {
+			_ = sessions.Destroy(token)
+			auth.ClearSessionCookie(w, r)
+			securitylog.Event(securitylog.EventSessionBindingMismatch, ClientIP(r))
+			response.Error(w, http.StatusUnauthorized, "reauth_required")
 			return
 		}
 		if !ok {

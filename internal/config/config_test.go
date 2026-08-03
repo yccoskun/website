@@ -34,3 +34,19 @@ func TestLoadAllowStaticDirDefaultsFalse(t *testing.T) {
 		t.Fatal("AllowStaticDir = true, want false by default")
 	}
 }
+
+func TestLoadSessionBindingDefaultsFalse(t *testing.T) {
+	t.Setenv("SESSION_BINDING", "")
+	cfg := Load()
+	if cfg.SessionBinding {
+		t.Fatal("SessionBinding = true, want false by default")
+	}
+}
+
+func TestLoadSessionBindingEnabled(t *testing.T) {
+	t.Setenv("SESSION_BINDING", "1")
+	cfg := Load()
+	if !cfg.SessionBinding {
+		t.Fatal("SessionBinding = false, want true when SESSION_BINDING=1")
+	}
+}

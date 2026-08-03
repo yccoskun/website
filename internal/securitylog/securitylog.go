@@ -6,11 +6,12 @@ import (
 )
 
 const (
-	EventLoginFailure = "login_failure"
-	EventRateLimit    = "rate_limit"
-	EventExport       = "export"
-	EventImport       = "import"
-	EventMediaDelete  = "media_delete"
+	EventLoginFailure           = "login_failure"
+	EventRateLimit              = "rate_limit"
+	EventExport                 = "export"
+	EventImport                 = "import"
+	EventMediaDelete            = "media_delete"
+	EventSessionBindingMismatch = "session_binding_mismatch"
 )
 
 // Event logs a one-line structured security event to the default logger.

@@ -5,7 +5,7 @@ import { useDocumentMeta } from "@/lib/meta";
 import { useAdminSession } from "@/pages/admin/session";
 
 export function LoginPage() {
-  const { login } = useAdminSession();
+  const { login, reauthRequired } = useAdminSession();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -40,6 +40,15 @@ export function LoginPage() {
           <p className="mt-2 text-sm text-ink-600 dark:text-ink-400">
             Session cookie only — lasts 24 hours, then you sign in again.
           </p>
+
+          {reauthRequired ? (
+            <p
+              role="status"
+              className="mt-4 border-l-2 border-ember-600 pl-3 font-mono text-xs text-ink-600 dark:border-ember-400 dark:text-ink-400"
+            >
+              Session ended — sign in again.
+            </p>
+          ) : null}
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>
             <label className="block">

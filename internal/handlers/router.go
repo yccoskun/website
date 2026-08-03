@@ -36,7 +36,7 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 	api.Handle("POST /api/admin/login", loginLimiter.Middleware(http.HandlerFunc(deps.AdminLogin)))
 
 	requireAuth := func(h http.HandlerFunc) http.Handler {
-		return middleware.RequireSession(deps.Sessions, h)
+		return middleware.RequireSession(deps.Sessions, deps.Config.SessionBinding, h)
 	}
 
 	api.Handle("POST /api/admin/logout", http.HandlerFunc(deps.AdminLogout))

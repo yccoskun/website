@@ -85,6 +85,7 @@ security event=<name> ip=<ip> [<key>=<value> ...]
 |-------|----------------|--------------|
 | `login_failure` | Failed admin login | — |
 | `rate_limit` | Login throttle hit (429) | — |
+| `session_binding_mismatch` | Soft session binding failed (UA or IP /24|/48 hash) | — |
 | `export` | Successful content export | — |
 | `import` | Successful content import | `settings_upserted`, `pages_upserted`, `work_created`, `studio_created`, `sections_created`, `entries_created`, `replace_work`, `replace_studio`, `replace_resume` |
 | `media_delete` | Media item deleted | `id` |
@@ -113,6 +114,7 @@ accepted for the single operator. Destructive list replace requires both dump
 |--------|----------------|--------|
 | Many `rate_limit` lines from one `ip=` | Login brute force or 429 storm | Check Cloudflare/WAF; consider blocking IP at edge; review whether admin login should stay exposed |
 | Burst of `login_failure` | Wrong password attempts or credential stuffing | Correlate IPs; confirm no legitimate lockout; tighten edge rules if sustained |
+| `session_binding_mismatch` | Session cookie reused from a different UA or IP prefix | Expected after network/browser changes when binding is on; re-login only — not a lockout. Investigate if unexpected / frequent from unfamiliar IPs |
 | `export`, `import`, or `media_delete` outside known admin activity | Possible compromise or unexpected automation | Confirm you (or CI) did not run it; rotate `ADMIN_PASSWORD_HASH`; review session/access |
 
 For a single-tenant site, a few failed logins are normal noise; sustained clusters from
@@ -166,6 +168,35 @@ EnvironmentFile=-/etc/website.env
 ```
 
 Then `sudo systemctl daemon-reload && sudo systemctl restart website`.
+
+### Soft session binding (optional)
+
+Off by default. To bind admin sessions to a User-Agent hash and an IP prefix
+hash (IPv4 `/24` or IPv6 `/48`, derived via `ClientIP`), add to `/etc/website.env`:
+
+```bash
+SESSION_BINDING=1
+```
+
+Truthy values: `1`, `true`, `yes` (case-insensitive). Restart the unit after
+changing the file.
+
+When enabled, login stores SHA-256 hex of the UA and of the IP prefix — never
+raw UA/IP. Login fails closed if either hint is missing (empty User-Agent or
+unparseable client IP). Authenticated admin requests (including protected
+`/media/{id}`) that present a session with **both** hashes set must match
+both; **either** mismatch destroys the session, clears `__Host-session`, and
+returns `401` with `reauth_required` (and logs `session_binding_mismatch`).
+There is **no** account lockout — only re-login.
+
+With the flag off, login does not store binding hashes (NULL columns). Sessions
+created while the flag was off (or before this feature) keep expiry-only
+validation even after you enable the flag, until the next login.
+
+**False-positive risks:** CGNAT `/24` churn, mobile carrier IP handoffs, and
+privacy browsers that rotate User-Agent can force an unexpected re-login.
+Prefer leaving this off unless you accept that friction for a single-operator
+admin surface.
 
 ## Cryptographic posture
 

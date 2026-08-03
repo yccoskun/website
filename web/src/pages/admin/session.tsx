@@ -18,10 +18,12 @@ interface AdminSessionValue {
   status: AdminSessionStatus;
   username: string | null;
   bootError: string | null;
+  /** True when the last 401 was reauth_required (soft session binding). */
+  reauthRequired: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   retry: () => void;
-  onUnauthorized: () => void;
+  onUnauthorized: (opts?: { reauth?: boolean }) => void;
 }
 
 const AdminSessionContext = createContext<AdminSessionValue | null>(null);
@@ -32,6 +34,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AdminSessionStatus>("checking");
   const [username, setUsername] = useState<string | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [reauthRequired, setReauthRequired] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
 
   /** Replace the current history entry to drop create-post seed from state. */
@@ -48,12 +51,14 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setUsername(me.username);
         setBootError(null);
+        setReauthRequired(false);
         setStatus("authed");
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setUsername(null);
         if (err instanceof ApiError && err.status === 401) {
+          setReauthRequired(err.message === "reauth_required");
           setBootError(null);
           setStatus("anonymous");
           // Clear create-post seed on this entry when present; skip if already clean
@@ -78,15 +83,16 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** Drop local session and clear the current history entry's state (create-post seed). */
-  const dropToAnonymous = useCallback(() => {
+  const dropToAnonymous = useCallback((opts?: { reauth?: boolean }) => {
     setUsername(null);
     setBootError(null);
+    setReauthRequired(opts?.reauth === true);
     setStatus("anonymous");
     clearCurrentHistoryState();
   }, [clearCurrentHistoryState]);
 
-  const onUnauthorized = useCallback(() => {
-    dropToAnonymous();
+  const onUnauthorized = useCallback((opts?: { reauth?: boolean }) => {
+    dropToAnonymous(opts);
   }, [dropToAnonymous]);
 
   const login = useCallback(async (user: string, password: string) => {
@@ -105,6 +111,7 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     const me = await apiGet<MeResponse>("/api/admin/me");
     setUsername(me.username);
     setBootError(null);
+    setReauthRequired(false);
     setStatus("authed");
   }, []);
 
@@ -119,8 +126,17 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   }, [dropToAnonymous]);
 
   const value = useMemo(
-    () => ({ status, username, bootError, login, logout, retry, onUnauthorized }),
-    [status, username, bootError, login, logout, retry, onUnauthorized],
+    () => ({
+      status,
+      username,
+      bootError,
+      reauthRequired,
+      login,
+      logout,
+      retry,
+      onUnauthorized,
+    }),
+    [status, username, bootError, reauthRequired, login, logout, retry, onUnauthorized],
   );
 
   return (
@@ -137,10 +153,10 @@ export function useAdminSession(): AdminSessionValue {
 /** If err is a 401 ApiError, bounce to anonymous and return true. */
 export function handleAdminUnauthorized(
   err: unknown,
-  onUnauthorized: () => void,
+  onUnauthorized: (opts?: { reauth?: boolean }) => void,
 ): boolean {
   if (err instanceof ApiError && err.status === 401) {
-    onUnauthorized();
+    onUnauthorized({ reauth: err.message === "reauth_required" });
     return true;
   }
   return false;

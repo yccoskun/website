@@ -129,9 +129,22 @@ func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 			mediaNotFound(w, r)
 			return
 		}
-		ok, err := d.Sessions.Validate(auth.SessionToken(r))
+		ok, mismatch, err := d.Sessions.Validate(
+			auth.SessionToken(r),
+			r.UserAgent(),
+			middleware.ClientIP(r),
+			d.Config.SessionBinding,
+		)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		if mismatch {
+			_ = d.Sessions.Destroy(auth.SessionToken(r))
+			auth.ClearSessionCookie(w, r)
+			securitylog.Event(securitylog.EventSessionBindingMismatch, middleware.ClientIP(r))
+			w.Header().Set("Cache-Control", "private, no-store")
+			response.Error(w, http.StatusUnauthorized, "reauth_required")
 			return
 		}
 		if !ok {

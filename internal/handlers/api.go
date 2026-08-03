@@ -172,7 +172,7 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expires, err := d.Sessions.Create()
+	token, expires, err := d.Sessions.Create(r.UserAgent(), middleware.ClientIP(r), d.Config.SessionBinding)
 	if err != nil {
 		mapServiceError(w, err)
 		return

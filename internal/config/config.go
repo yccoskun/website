@@ -29,6 +29,9 @@ type Config struct {
 	AdminUsername string
 	// AdminPasswordHash is a bcrypt hash of the admin password. Empty disables login.
 	AdminPasswordHash string
+	// SessionBinding enables soft session binding (UA + IP prefix hashes).
+	// Off by default; set SESSION_BINDING=1|true|yes to enable.
+	SessionBinding bool
 }
 
 // Load reads configuration from the environment, applying defaults.
@@ -42,6 +45,7 @@ func Load() Config {
 		SiteURL:           strings.TrimRight(envOr("SITE_URL", "https://www.yusufcancoskun.com"), "/"),
 		AdminUsername:     os.Getenv("ADMIN_USERNAME"),
 		AdminPasswordHash: os.Getenv("ADMIN_PASSWORD_HASH"),
+		SessionBinding:    envBool("SESSION_BINDING"),
 	}
 }
 
