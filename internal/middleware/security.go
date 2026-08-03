@@ -5,7 +5,8 @@ import "net/http"
 // SecurityHeaders adds baseline browser security headers, including a
 // restrictive Content-Security-Policy (default-src/script-src/style-src
 // 'self'; no unsafe-inline/unsafe-eval). The theme boot inline script is
-// allowed only via script-src 'sha256-...'. HSTS is left to Caddy.
+// allowed only via script-src 'sha256-...'. Cloudflare owns HSTS at the
+// edge; Go must not set it (avoids localhost / non-edge conflict).
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")

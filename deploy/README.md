@@ -15,6 +15,23 @@ Browser ──HTTPS──> Cloudflare ──tunnel──> cloudflared ──> Ca
   and `ssh.yusufcancoskun.com` to sshd (SSH also goes through the tunnel).
 - Backups are Hetzner server snapshots — no backup scripts or timers in the app.
 
+## Edge TLS / HSTS
+
+**Owner:** Cloudflare (SSL/TLS → Edge Certificates) — not Go, not Caddy.
+
+| Requirement | Policy |
+|-------------|--------|
+| **HSTS** | `Strict-Transport-Security` with `max-age` ≥ `15552000` (180 days). Preload is optional / not required. |
+| **Always Use HTTPS** | HTTP must redirect with a 3xx and `Location: https://…` for apex and www (typically 301/302; 307/308 also fine). |
+
+Dashboard: enable **Always Use HTTPS**, then enable **HSTS** with `max-age` ≥ 15552000. `includeSubDomains` is optional: the zone also serves `ssh.yusufcancoskun.com` (tunnel to sshd). HSTS does not affect SSH itself, but browsers would force HTTPS for any *web* clients on that hostname — prefer leaving `includeSubDomains` off unless you understand that scope. The smoke script does **not** assert `includeSubDomains`.
+
+**Non-goals:** no HSTS in Go; no HSTS on plain-HTTP localhost; do not add conflicting HSTS to the loopback Caddyfile.
+
+**Mixed content:** the admin SPA uses same-origin embedded assets (`/assets/*`); CSP already restricts to `'self'`. The smoke script only checks quoted `src=` / `href=` for absolute `http://` in `/admin` HTML.
+
+`deploy/smoke-edge-tls.sh` will fail until these Cloudflare edge settings are applied. See [Smoke checks after deploy](#smoke-checks-after-deploy).
+
 ## Rate limiting
 
 Ownership by hop:
@@ -361,3 +378,12 @@ curl -s https://www.yusufcancoskun.com/robots.txt
 curl -s https://www.yusufcancoskun.com/sitemap.xml | head
 systemctl status website caddy cloudflared
 ```
+
+Optional production-only edge TLS / HSTS check (not CI; probes live Cloudflare):
+
+```bash
+./deploy/smoke-edge-tls.sh
+# or: bash deploy/smoke-edge-tls.sh
+```
+
+Asserts HSTS (`max-age` ≥ 15552000) on HTTPS for apex and www, HTTP→HTTPS redirects (3xx + `Location` to apex/www over https) for both hostnames, and no absolute `http://` in quoted `src`/`href` on `/admin` HTML. Fails until Cloudflare Always Use HTTPS + HSTS are configured (see [Edge TLS / HSTS](#edge-tls--hsts)).

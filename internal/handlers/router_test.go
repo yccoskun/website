@@ -89,6 +89,10 @@ func assertSecurityHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
 	if strings.Contains(csp, "unsafe-eval") {
 		t.Fatalf("Content-Security-Policy = %q, must not include unsafe-eval", csp)
 	}
+	// HSTS belongs at Cloudflare edge — never on the Go app (localhost / non-edge).
+	if sts := rec.Header().Get("Strict-Transport-Security"); sts != "" {
+		t.Fatalf("Strict-Transport-Security = %q, want absent (edge-owned)", sts)
+	}
 }
 
 func TestSPAHasSecurityHeaders(t *testing.T) {
