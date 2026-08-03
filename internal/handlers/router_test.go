@@ -93,6 +93,20 @@ func assertSecurityHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
 	if sts := rec.Header().Get("Strict-Transport-Security"); sts != "" {
 		t.Fatalf("Strict-Transport-Security = %q, want absent (edge-owned)", sts)
 	}
+	// CORS is intentionally unset. Wildcard or echoed ACAO is forbidden with cookie auth.
+	corsHeaders := []string{
+		"Access-Control-Allow-Origin",
+		"Access-Control-Allow-Credentials",
+		"Access-Control-Allow-Methods",
+		"Access-Control-Allow-Headers",
+		"Access-Control-Expose-Headers",
+		"Access-Control-Max-Age",
+	}
+	for _, h := range corsHeaders {
+		if got := rec.Header().Get(h); got != "" {
+			t.Fatalf("%s = %q, want absent (no CORS; never *)", h, got)
+		}
+	}
 }
 
 func TestSPAHasSecurityHeaders(t *testing.T) {
@@ -1071,6 +1085,64 @@ func TestAdminAPISecFetchSite(t *testing.T) {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		assertEnvelope(t, rec, http.StatusOK, `{"data":[],"error":null}`)
+	})
+}
+
+func TestAdminAPINoWildcardCORS(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	// Origin alone does not trigger Sec-Fetch-Site: missing is allowed for curl/tests.
+	// This case only guards against ACAO reflection / wildcard CORS on credentialed routes.
+	t.Run("authenticated admin with evil Origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusOK, `{"data":[],"error":null}`)
+		assertSecurityHeaders(t, rec)
+	})
+
+	t.Run("health with evil Origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertSecurityHeaders(t, rec)
+	})
+
+	t.Run("login with evil Origin", func(t *testing.T) {
+		body := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		assertSecurityHeaders(t, rec)
+	})
+
+	t.Run("logout with evil Origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("Origin", "https://evil.example")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("logout status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		assertSecurityHeaders(t, rec)
 	})
 }
 

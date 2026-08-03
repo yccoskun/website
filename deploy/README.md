@@ -328,6 +328,18 @@ send the header. Allowed values: missing, `same-origin`, `same-site`,
 same-origin fetches with `credentials: "include"` send `same-origin` and
 are unaffected. Login and logout are not covered by this check.
 
+### CORS: deny (same-origin admin API)
+
+- Credentialed admin API is same-origin only (SPA relative fetches +
+  `__Host-session` cookie).
+- Do not add `Access-Control-Allow-Origin: *` (or any permissive CORS) on Go
+  or Caddy.
+- Absence of CORS headers is intentional; browsers will not expose
+  cross-origin responses to JS.
+- If CORS is ever required: explicit origin allowlist, never `*`, and a
+  threat review of `Access-Control-Allow-Credentials` with cookie auth
+  (OWASP A01/A02).
+
 ## CI → deploy flow
 
 On push to `main`, `.github/workflows/deploy.yml` runs a two-job pipeline.
