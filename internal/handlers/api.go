@@ -167,7 +167,7 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 		d.Config.AdminPasswordHash != "" &&
 		auth.ConstantTimeUsernameEqual(body.Username, d.Config.AdminUsername)
 	if !userOK || !passOK {
-		securitylog.Event(securitylog.EventLoginFailure, middleware.ClientIP(r))
+		securitylog.Default.LoginFailure(middleware.ClientIP(r), r.URL.Path)
 		response.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -178,6 +178,7 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth.SetSessionCookie(w, r, token, expires)
+	securitylog.Default.LoginSuccess(middleware.ClientIP(r), r.URL.Path)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

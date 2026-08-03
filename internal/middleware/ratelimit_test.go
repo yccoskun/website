@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yccoskun/website/internal/securitylog"
 )
 
 func TestLoginRateLimitSameIP(t *testing.T) {
@@ -52,6 +54,9 @@ func TestLoginRateLimitSameIP(t *testing.T) {
 }
 
 func TestLoginRateLimitLogsOnlyOn429(t *testing.T) {
+	securitylog.Default = securitylog.NewAlertTracker()
+	t.Cleanup(func() { securitylog.Default = securitylog.NewAlertTracker() })
+
 	var buf bytes.Buffer
 	prevOut := log.Writer()
 	prevFlags := log.Flags()
@@ -97,6 +102,28 @@ func TestLoginRateLimitLogsOnlyOn429(t *testing.T) {
 	want := "security event=rate_limit ip=" + wantIP
 	if !strings.Contains(lines[0], want) {
 		t.Fatalf("log line = %q, want substring %q", lines[0], want)
+	}
+	if !strings.Contains(lines[0], "route=/api/admin/login") {
+		t.Fatalf("log line = %q, want route=/api/admin/login", lines[0])
+	}
+	if !strings.Contains(lines[0], "alert=1") || !strings.Contains(lines[0], "reason=rate_limit") {
+		t.Fatalf("log line = %q, want alert=1 reason=rate_limit", lines[0])
+	}
+
+	buf.Reset()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+	req2.RemoteAddr = wantIP + ":54323"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusTooManyRequests {
+		t.Fatalf("second 429 status = %d, want 429", rec2.Code)
+	}
+	lines = rateLimitLogLines(buf.String())
+	if len(lines) != 1 {
+		t.Fatalf("second 429 logged %d rate_limit lines, want 1: %q", len(lines), buf.String())
+	}
+	if strings.Contains(lines[0], "alert=1") {
+		t.Fatalf("second 429 in window must not re-alert: %q", lines[0])
 	}
 }
 

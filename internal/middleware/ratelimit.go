@@ -39,7 +39,7 @@ func (l *LoginRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := ClientIP(r)
 		if !l.allow(ip) {
-			securitylog.Event(securitylog.EventRateLimit, ip)
+			securitylog.Default.RateLimit(ip, "/api/admin/login")
 			response.Error(w, http.StatusTooManyRequests, "too many login attempts")
 			return
 		}

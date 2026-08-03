@@ -26,9 +26,9 @@ func TestEvent(t *testing.T) {
 	}
 
 	buf.Reset()
-	Event(EventRateLimit, "2001:db8::1", "path", "/api/admin/login")
+	Event(EventRateLimit, "2001:db8::1", "route", "/api/admin/login")
 	got = strings.TrimSpace(buf.String())
-	want = "security event=rate_limit ip=2001:db8::1 path=/api/admin/login"
+	want = "security event=rate_limit ip=2001:db8::1 route=/api/admin/login"
 	if got != want {
 		t.Fatalf("Event() with fields = %q, want %q", got, want)
 	}

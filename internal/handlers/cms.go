@@ -142,7 +142,7 @@ func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 		if mismatch {
 			_ = d.Sessions.Destroy(auth.SessionToken(r))
 			auth.ClearSessionCookie(w, r)
-			securitylog.Event(securitylog.EventSessionBindingMismatch, middleware.ClientIP(r))
+			securitylog.Event(securitylog.EventSessionBindingMismatch, middleware.ClientIP(r), "route", r.URL.Path)
 			w.Header().Set("Cache-Control", "private, no-store")
 			response.Error(w, http.StatusUnauthorized, "reauth_required")
 			return
@@ -475,6 +475,7 @@ func (d Deps) AdminUploadMedia(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
+	securitylog.Default.MediaUpload(middleware.ClientIP(r), r.URL.Path)
 	response.JSON(w, http.StatusCreated, asset)
 }
 
@@ -489,7 +490,10 @@ func (d Deps) AdminDeleteMedia(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
-	securitylog.Event(securitylog.EventMediaDelete, middleware.ClientIP(r), "id", strconv.FormatInt(id, 10))
+	securitylog.Event(securitylog.EventMediaDelete, middleware.ClientIP(r),
+		"route", r.URL.Path,
+		"id", strconv.FormatInt(id, 10),
+	)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -564,7 +568,8 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
-	securitylog.Event(securitylog.EventImport, middleware.ClientIP(r),
+	fields := []string{
+		"route", r.URL.Path,
 		"settings_upserted", fmt.Sprintf("%d", result.SettingsUpserted),
 		"pages_upserted", fmt.Sprintf("%d", result.PagesUpserted),
 		"work_created", fmt.Sprintf("%d", result.WorkCreated),
@@ -574,7 +579,9 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 		"replace_work", fmt.Sprintf("%t", dump.ReplaceWork),
 		"replace_studio", fmt.Sprintf("%t", dump.ReplaceStudio),
 		"replace_resume", fmt.Sprintf("%t", dump.ReplaceResume),
-	)
+	}
+	fields = append(fields, securitylog.ImportAlertFields(dump.ReplaceWork, dump.ReplaceStudio, dump.ReplaceResume)...)
+	securitylog.Event(securitylog.EventImport, middleware.ClientIP(r), fields...)
 	response.JSON(w, http.StatusOK, result)
 }
 
@@ -601,6 +608,8 @@ func (d Deps) AdminExport(w http.ResponseWriter, r *http.Request) {
 		mapServiceError(w, err)
 		return
 	}
-	securitylog.Event(securitylog.EventExport, middleware.ClientIP(r))
+	fields := []string{"route", r.URL.Path}
+	fields = append(fields, securitylog.ExportAlertFields()...)
+	securitylog.Event(securitylog.EventExport, middleware.ClientIP(r), fields...)
 	response.JSON(w, http.StatusOK, dump)
 }

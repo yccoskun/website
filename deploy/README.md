@@ -57,11 +57,19 @@ sudo journalctl -u website --since "24 hours ago" | grep 'security event='
 sudo journalctl -u website -f | grep --line-buffered 'security event='
 ```
 
+Alert lines only (`alert=1`):
+
+```bash
+sudo journalctl -u website --since today | grep 'alert=1'
+sudo journalctl -u website -f | grep --line-buffered 'alert=1'
+```
+
 Filter by event name:
 
 ```bash
 sudo journalctl -u website --since today | grep 'security event=login_failure'
 sudo journalctl -u website --since today | grep 'security event=rate_limit'
+sudo journalctl -u website --since today | grep 'security event=login_success'
 ```
 
 Count `rate_limit` hits per IP (spot repeat offenders):
@@ -78,28 +86,83 @@ sudo journalctl -u website --since "24 hours ago" \
 Each line is a single space-separated record:
 
 ```
-security event=<name> ip=<ip> [<key>=<value> ...]
+security event=<name> ip=<ip> route=<path> [key=value ...] [alert=1 reason=<reason> ...]
 ```
 
 | Event | When emitted | Extra fields |
 |-------|----------------|--------------|
-| `login_failure` | Failed admin login | — |
-| `rate_limit` | Login throttle hit (429) | — |
-| `session_binding_mismatch` | Soft session binding failed (UA or IP /24|/48 hash) | — |
-| `export` | Successful content export | — |
-| `import` | Successful content import | `settings_upserted`, `pages_upserted`, `work_created`, `studio_created`, `sections_created`, `entries_created`, `replace_work`, `replace_studio`, `replace_resume` |
-| `media_delete` | Media item deleted | `id` |
+| `login_failure` | Failed admin login | `route`; `alert=1 reason=login_failure_burst` when threshold hit |
+| `login_success` | Successful admin login (after session create) | `route`; `alert=1 reason=login_success_after_failures failures=N` when ≥5 prior failures |
+| `rate_limit` | Login throttle hit (429) | `route`; `alert=1 reason=rate_limit` once per IP / 15m |
+| `session_binding_mismatch` | Soft session binding failed (UA or IP /24|/48 hash) | `route` |
+| `export` | Successful content export | `route`; always `alert=1 reason=export` |
+| `import` | Successful content import | `route`, counts, `replace_*`; `alert=1 reason=import_replace` only if any `replace_*=true` |
+| `media_upload` | Successful media upload | `route`; `alert=1 reason=media_upload_spike count=N` when threshold hit |
+| `media_delete` | Media item deleted | `route`, `id` |
 
-Successful admin login is **not** logged — there is no `login_success` event.
+Routine single login failure, one upload, non-replace import, or successful login with
+fewer than 5 prior failures: **base log only, no `alert=`**. Intentional export always
+alerts (high-signal audit); treat that as expected when you run backups yourself.
 
 Example:
 
 ```
-security event=import ip=203.0.113.5 settings_upserted=4 pages_upserted=12 work_created=3 studio_created=2 sections_created=5 entries_created=18 replace_work=true replace_studio=true replace_resume=true
+security event=import ip=203.0.113.5 route=/api/admin/import settings_upserted=4 pages_upserted=12 work_created=3 studio_created=2 sections_created=5 entries_created=18 replace_work=true replace_studio=true replace_resume=true alert=1 reason=import_replace
 ```
 
 Logs **never** include usernames, passwords, session tokens, or full export/import
 payloads — only event metadata and counts.
+
+### Alert thresholds
+
+In-process thresholds (single-tenant, low noise). When a threshold fires, `alert=1` and
+`reason=` are attached to the **same** base event line (once per IP/reason window unless noted).
+
+| Signal | Base event | When `alert=1` |
+|--------|------------|----------------|
+| Repeated login 429 | `rate_limit` | First 429 per IP / 15m (`reason=rate_limit`); further 429s in the window log without re-alerting |
+| Burst failed logins | `login_failure` | ≥5 failures / 15m / IP → once per window (`reason=login_failure_burst`) |
+| Success after failures | `login_success` | ≥5 prior failures in the same failure window → once (`reason=login_success_after_failures`, `failures=N`) |
+| Export / import replace | `export` / `import` | `export`: always (`reason=export`); `import`: only if any `replace_*=true` (`reason=import_replace`) |
+| Media upload spikes | `media_upload` | ≥15 uploads / 10m / IP → once (`reason=media_upload_spike`, `count=N`) |
+
+### Alert watcher (ops path)
+
+`deploy/security-alert-watch.sh` tails the systemd unit journal (default `UNIT=website`) and
+prints lines containing `alert=1`. If `WEBHOOK_URL` is set, each matching line is POSTed as
+`text/plain` (no secrets beyond what is already in the log line). Webhook failures are
+logged to stderr so a dead endpoint is visible.
+
+```bash
+# Follow alerts on the server (foreground)
+sudo ./deploy/security-alert-watch.sh
+
+# Custom unit name
+sudo UNIT=website ./deploy/security-alert-watch.sh
+
+# Optional webhook (Slack incoming webhook, ntfy, etc.)
+sudo WEBHOOK_URL='https://example.invalid/hook' ./deploy/security-alert-watch.sh
+```
+
+Manual smoke check (confirm the watcher and app path once after deploy):
+
+```bash
+# Terminal A: start the watcher
+sudo ./deploy/security-alert-watch.sh
+
+# Terminal B: trigger one rate_limit alert (11+ failed logins from the same IP),
+# or inspect recent alerts:
+sudo journalctl -u website --since "7 days ago" | grep 'alert=1' | head
+```
+
+Keep the watcher in `screen`/`tmux`, or wrap it in a simple user systemd unit if you want
+it always on. This is the documented minimal alerting path (not a full APM).
+
+### Cloudflare (optional edge complement)
+
+Cloudflare WAF / rate-limit notifications are an **optional edge** complement. They do not
+replace app-level `alert=1` lines: edge signals are about HTTP at the proxy, while these
+journal alerts are about authenticated admin actions and login thresholds inside the Go app.
 
 Content import JSON is **trusted admin input**: only authenticated admins who complete
 the password step-up (T7) may submit it. Treat dumps like credentials — do not paste
@@ -112,10 +175,13 @@ accepted for the single operator. Destructive list replace requires both dump
 
 | Signal | Likely cause | Action |
 |--------|----------------|--------|
-| Many `rate_limit` lines from one `ip=` | Login brute force or 429 storm | Check Cloudflare/WAF; consider blocking IP at edge; review whether admin login should stay exposed |
-| Burst of `login_failure` | Wrong password attempts or credential stuffing | Correlate IPs; confirm no legitimate lockout; tighten edge rules if sustained |
+| `alert=1 reason=rate_limit` | Login brute force or 429 storm | Check Cloudflare/WAF; consider blocking IP at edge; review whether admin login should stay exposed |
+| `alert=1 reason=login_failure_burst` | Wrong password attempts or credential stuffing | Correlate IPs; confirm no legitimate lockout; tighten edge rules if sustained |
+| `alert=1 reason=login_success_after_failures` | Possible credential stuffing then success | Confirm it was you; rotate password if unexpected |
+| `alert=1 reason=export` / `import_replace` | Content dump or destructive import | Confirm you (or CI) did it; rotate credentials if unexpected |
+| `alert=1 reason=media_upload_spike` | Bulk upload or compromise | Confirm admin activity; review media library |
 | `session_binding_mismatch` | Session cookie reused from a different UA or IP prefix | Expected after network/browser changes when binding is on; re-login only — not a lockout. Investigate if unexpected / frequent from unfamiliar IPs |
-| `export`, `import`, or `media_delete` outside known admin activity | Possible compromise or unexpected automation | Confirm you (or CI) did not run it; rotate `ADMIN_PASSWORD_HASH`; review session/access |
+| `media_delete` outside known admin activity | Possible compromise or unexpected automation | Confirm you did not run it; rotate `ADMIN_PASSWORD_HASH`; review session/access |
 
 For a single-tenant site, a few failed logins are normal noise; sustained clusters from
 unfamiliar IPs or off-hours bulk `export`/`import` deserve a closer look.

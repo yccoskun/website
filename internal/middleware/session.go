@@ -56,7 +56,7 @@ func RequireSession(sessions *services.SessionService, bindingEnabled bool, next
 		if mismatch {
 			_ = sessions.Destroy(token)
 			auth.ClearSessionCookie(w, r)
-			securitylog.Event(securitylog.EventSessionBindingMismatch, ClientIP(r))
+			securitylog.Event(securitylog.EventSessionBindingMismatch, ClientIP(r), "route", r.URL.Path)
 			response.Error(w, http.StatusUnauthorized, "reauth_required")
 			return
 		}

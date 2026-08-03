@@ -7,15 +7,17 @@ import (
 
 const (
 	EventLoginFailure           = "login_failure"
+	EventLoginSuccess           = "login_success"
 	EventRateLimit              = "rate_limit"
 	EventExport                 = "export"
 	EventImport                 = "import"
 	EventMediaDelete            = "media_delete"
+	EventMediaUpload            = "media_upload"
 	EventSessionBindingMismatch = "session_binding_mismatch"
 )
 
 // Event logs a one-line structured security event to the default logger.
-// fields are alternating key, value pairs (e.g. "path", "/api/admin/export").
+// fields are alternating key, value pairs (e.g. "route", "/api/admin/export").
 // A trailing key without a value is ignored.
 func Event(event string, ip string, fields ...string) {
 	var b strings.Builder
