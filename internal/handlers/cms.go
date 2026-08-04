@@ -556,6 +556,7 @@ func (d Deps) AdminImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	importer := &services.ImportService{
+		DB:       d.DB,
 		Settings: d.Settings,
 		Pages:    d.Pages,
 		Work:     d.Work,
@@ -596,6 +597,7 @@ func (d Deps) AdminExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exporter := &services.ImportService{
+		DB:       d.DB,
 		Settings: d.Settings,
 		Pages:    d.Pages,
 		Work:     d.Work,

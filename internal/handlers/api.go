@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -17,6 +18,7 @@ import (
 
 // Deps holds handler dependencies injected at router construction.
 type Deps struct {
+	DB       *sql.DB
 	Posts    *services.PostService
 	Resume   *services.ResumeService
 	Sessions *services.SessionService

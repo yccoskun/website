@@ -57,6 +57,7 @@ func main() {
 	resume := services.NewResumeService(db).WithPages(pages, media)
 
 	deps := handlers.Deps{
+		DB:       db,
 		Posts:    services.NewPostService(db),
 		Resume:   resume,
 		Sessions: sessions,

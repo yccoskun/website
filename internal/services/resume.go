@@ -12,9 +12,9 @@ import (
 
 // ResumeService manages resume sections and entries.
 type ResumeService struct {
-	db     *sql.DB
-	pages  *PageService
-	media  *MediaService
+	db    *sql.DB
+	pages *PageService
+	media *MediaService
 }
 
 // NewResumeService constructs a ResumeService backed by db.
@@ -186,7 +186,11 @@ func (s *ResumeService) AdminListEntries() ([]models.ResumeEntry, error) {
 
 // GetEntryByID returns a single resume entry.
 func (s *ResumeService) GetEntryByID(id int64) (models.ResumeEntry, error) {
-	row := s.db.QueryRow(`SELECT `+resumeEntryColumns+` FROM resume_entries WHERE id = ?`, id)
+	return s.getEntryByID(s.db, id)
+}
+
+func (s *ResumeService) getEntryByID(q dbQuerier, id int64) (models.ResumeEntry, error) {
+	row := q.QueryRow(`SELECT `+resumeEntryColumns+` FROM resume_entries WHERE id = ?`, id)
 	e, err := scanResumeEntry(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResumeEntry{}, ErrNotFound
@@ -197,9 +201,9 @@ func (s *ResumeService) GetEntryByID(id int64) (models.ResumeEntry, error) {
 	return e, nil
 }
 
-func (s *ResumeService) sectionExists(id int64) error {
+func (s *ResumeService) sectionExists(q dbQuerier, id int64) error {
 	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM resume_sections WHERE id = ?`, id).Scan(&exists)
+	err := q.QueryRow(`SELECT 1 FROM resume_sections WHERE id = ?`, id).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: section not found", ErrValidation)
 	}
@@ -211,10 +215,14 @@ func (s *ResumeService) sectionExists(id int64) error {
 
 // CreateEntry inserts a resume entry under a section.
 func (s *ResumeService) CreateEntry(in ResumeEntryInput) (models.ResumeEntry, error) {
+	return s.createEntry(s.db, in)
+}
+
+func (s *ResumeService) createEntry(q dbQuerier, in ResumeEntryInput) (models.ResumeEntry, error) {
 	if in.SectionID <= 0 {
 		return models.ResumeEntry{}, fmt.Errorf("%w: section_id is required", ErrValidation)
 	}
-	if err := s.sectionExists(in.SectionID); err != nil {
+	if err := s.sectionExists(q, in.SectionID); err != nil {
 		return models.ResumeEntry{}, err
 	}
 
@@ -223,7 +231,7 @@ func (s *ResumeService) CreateEntry(in ResumeEntryInput) (models.ResumeEntry, er
 		return models.ResumeEntry{}, err
 	}
 
-	res, err := s.db.Exec(
+	res, err := q.Exec(
 		`INSERT INTO resume_entries (section_id, org, role, location, period, body_md, body_html, tech, sort_order)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.SectionID, in.Org, in.Role, in.Location, in.Period, in.BodyMD, html, in.Tech, in.SortOrder,
@@ -235,7 +243,7 @@ func (s *ResumeService) CreateEntry(in ResumeEntryInput) (models.ResumeEntry, er
 	if err != nil {
 		return models.ResumeEntry{}, fmt.Errorf("create resume entry id: %w", err)
 	}
-	return s.GetEntryByID(id)
+	return s.getEntryByID(q, id)
 }
 
 // UpdateEntry replaces a resume entry.
@@ -246,7 +254,7 @@ func (s *ResumeService) UpdateEntry(id int64, in ResumeEntryInput) (models.Resum
 	if in.SectionID <= 0 {
 		return models.ResumeEntry{}, fmt.Errorf("%w: section_id is required", ErrValidation)
 	}
-	if err := s.sectionExists(in.SectionID); err != nil {
+	if err := s.sectionExists(s.db, in.SectionID); err != nil {
 		return models.ResumeEntry{}, err
 	}
 
@@ -293,7 +301,11 @@ func validateSectionKind(kind models.ResumeSectionKind) error {
 
 // ListSections returns all resume sections (no entries).
 func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
-	rows, err := s.db.Query(
+	return s.listSections(s.db)
+}
+
+func (s *ResumeService) listSections(q dbQuerier) ([]models.ResumeSection, error) {
+	rows, err := q.Query(
 		`SELECT ` + resumeSectionColumns + ` FROM resume_sections ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
@@ -317,7 +329,11 @@ func (s *ResumeService) ListSections() ([]models.ResumeSection, error) {
 
 // GetSectionByID returns a section without entries.
 func (s *ResumeService) GetSectionByID(id int64) (models.ResumeSection, error) {
-	sec, err := scanResumeSection(s.db.QueryRow(
+	return s.getSectionByID(s.db, id)
+}
+
+func (s *ResumeService) getSectionByID(q dbQuerier, id int64) (models.ResumeSection, error) {
+	sec, err := scanResumeSection(q.QueryRow(
 		`SELECT `+resumeSectionColumns+` FROM resume_sections WHERE id = ?`, id,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -331,13 +347,17 @@ func (s *ResumeService) GetSectionByID(id int64) (models.ResumeSection, error) {
 
 // CreateSection inserts a resume section.
 func (s *ResumeService) CreateSection(in ResumeSectionInput) (models.ResumeSection, error) {
+	return s.createSection(s.db, in)
+}
+
+func (s *ResumeService) createSection(q dbQuerier, in ResumeSectionInput) (models.ResumeSection, error) {
 	if err := validateSectionKind(in.Kind); err != nil {
 		return models.ResumeSection{}, err
 	}
 	if strings.TrimSpace(in.Title) == "" {
 		return models.ResumeSection{}, fmt.Errorf("%w: title is required", ErrValidation)
 	}
-	res, err := s.db.Exec(
+	res, err := q.Exec(
 		`INSERT INTO resume_sections (kind, title, sort_order, accordion) VALUES (?, ?, ?, ?)`,
 		in.Kind, strings.TrimSpace(in.Title), in.SortOrder, accordionInt(in.Accordion),
 	)
@@ -348,7 +368,7 @@ func (s *ResumeService) CreateSection(in ResumeSectionInput) (models.ResumeSecti
 	if err != nil {
 		return models.ResumeSection{}, fmt.Errorf("create resume section id: %w", err)
 	}
-	return s.GetSectionByID(id)
+	return s.getSectionByID(q, id)
 }
 
 // UpdateSection replaces a resume section.
@@ -374,7 +394,11 @@ func (s *ResumeService) UpdateSection(id int64, in ResumeSectionInput) (models.R
 
 // DeleteSection removes a section and cascades entries.
 func (s *ResumeService) DeleteSection(id int64) error {
-	res, err := s.db.Exec(`DELETE FROM resume_sections WHERE id = ?`, id)
+	return s.deleteSection(s.db, id)
+}
+
+func (s *ResumeService) deleteSection(q dbQuerier, id int64) error {
+	res, err := q.Exec(`DELETE FROM resume_sections WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete resume section: %w", err)
 	}

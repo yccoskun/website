@@ -1,15 +1,16 @@
 package services
 
 import (
+	"database/sql"
 	"fmt"
 )
 
 // ContentImport is a JSON dump for bootstrap / environment transfer via admin import.
 type ContentImport struct {
-	Settings map[string]string `json:"settings"`
-	Pages    []PageImport      `json:"pages"`
-	Work     []WorkInput       `json:"work"`
-	Studio   []StudioInput     `json:"studio"`
+	Settings map[string]string    `json:"settings"`
+	Pages    []PageImport         `json:"pages"`
+	Work     []WorkInput          `json:"work"`
+	Studio   []StudioInput        `json:"studio"`
 	Sections []ResumeSectionInput `json:"resume_sections"`
 	Entries  []ResumeEntryInput   `json:"resume_entries"`
 	// ReplaceResume when true deletes all existing resume sections (cascade entries)
@@ -41,6 +42,7 @@ type ImportResult struct {
 
 // ImportService applies or exports a content dump. Media files are not included.
 type ImportService struct {
+	DB       *sql.DB
 	Settings *SettingsService
 	Pages    *PageService
 	Work     *WorkService
@@ -147,78 +149,100 @@ func (s *ImportService) Export() (ContentImport, error) {
 // as the 1-based index among newly created sections when ReplaceResume is true;
 // otherwise SectionID is the real DB id.
 func (s *ImportService) Apply(in ContentImport) (ImportResult, error) {
+	if s.DB == nil {
+		return ImportResult{}, fmt.Errorf("import: database not configured")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("begin import: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	out, err := s.applyTx(tx, in)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ImportResult{}, fmt.Errorf("commit import: %w", err)
+	}
+	return out, nil
+}
+
+// applyTx runs all import writes on tx. Callers must use querier helpers with tx
+// (never public Create/Upsert/List on s.db) to avoid MaxOpenConns(1) deadlock.
+func (s *ImportService) applyTx(tx *sql.Tx, in ContentImport) (ImportResult, error) {
 	var out ImportResult
 
 	if len(in.Settings) > 0 {
-		if _, err := s.Settings.Upsert(in.Settings); err != nil {
-			return out, err
+		if err := s.Settings.upsert(tx, in.Settings); err != nil {
+			return ImportResult{}, err
 		}
 		out.SettingsUpserted = len(in.Settings)
 	}
 
 	for _, p := range in.Pages {
-		if _, err := s.Pages.Upsert(p.Slug, PageInput{
+		if _, err := s.Pages.upsert(tx, p.Slug, PageInput{
 			Title:           p.Title,
 			MetaDescription: p.MetaDescription,
 			BodyJSON:        p.BodyJSON,
 		}); err != nil {
-			return out, fmt.Errorf("page %q: %w", p.Slug, err)
+			return ImportResult{}, fmt.Errorf("page %q: %w", p.Slug, err)
 		}
 		out.PagesUpserted++
 	}
 
 	if in.ReplaceWork {
-		items, err := s.Work.List()
+		items, err := s.Work.list(tx)
 		if err != nil {
-			return out, err
+			return ImportResult{}, err
 		}
 		for _, w := range items {
-			if err := s.Work.Delete(w.ID); err != nil {
-				return out, err
+			if err := s.Work.delete(tx, w.ID); err != nil {
+				return ImportResult{}, err
 			}
 		}
 	}
 	for _, w := range in.Work {
-		if _, err := s.Work.Create(w); err != nil {
-			return out, fmt.Errorf("work %q: %w", w.Name, err)
+		if _, err := s.Work.create(tx, w); err != nil {
+			return ImportResult{}, fmt.Errorf("work %q: %w", w.Name, err)
 		}
 		out.WorkCreated++
 	}
 
 	if in.ReplaceStudio {
-		items, err := s.Studio.AdminList()
+		items, err := s.Studio.adminList(tx)
 		if err != nil {
-			return out, err
+			return ImportResult{}, err
 		}
 		for _, p := range items {
-			if err := s.Studio.Delete(p.ID); err != nil {
-				return out, err
+			if err := s.Studio.delete(tx, p.ID); err != nil {
+				return ImportResult{}, err
 			}
 		}
 	}
 	for _, p := range in.Studio {
-		if _, err := s.Studio.Create(p); err != nil {
-			return out, fmt.Errorf("studio %q: %w", p.Slug, err)
+		if _, err := s.Studio.create(tx, p); err != nil {
+			return ImportResult{}, fmt.Errorf("studio %q: %w", p.Slug, err)
 		}
 		out.StudioCreated++
 	}
 
 	sectionIDs := make([]int64, 0, len(in.Sections))
 	if in.ReplaceResume {
-		secs, err := s.Resume.ListSections()
+		secs, err := s.Resume.listSections(tx)
 		if err != nil {
-			return out, err
+			return ImportResult{}, err
 		}
 		for _, sec := range secs {
-			if err := s.Resume.DeleteSection(sec.ID); err != nil {
-				return out, err
+			if err := s.Resume.deleteSection(tx, sec.ID); err != nil {
+				return ImportResult{}, err
 			}
 		}
 	}
 	for _, sec := range in.Sections {
-		created, err := s.Resume.CreateSection(sec)
+		created, err := s.Resume.createSection(tx, sec)
 		if err != nil {
-			return out, fmt.Errorf("resume section %q: %w", sec.Title, err)
+			return ImportResult{}, fmt.Errorf("resume section %q: %w", sec.Title, err)
 		}
 		sectionIDs = append(sectionIDs, created.ID)
 		out.SectionsCreated++
@@ -230,12 +254,12 @@ func (s *ImportService) Apply(in ContentImport) (ImportResult, error) {
 			// SectionID in dump is 1-based index into imported sections.
 			idx := int(e.SectionID) - 1
 			if idx < 0 || idx >= len(sectionIDs) {
-				return out, fmt.Errorf("%w: resume entry section_id %d out of range", ErrValidation, e.SectionID)
+				return ImportResult{}, fmt.Errorf("%w: resume entry section_id %d out of range", ErrValidation, e.SectionID)
 			}
 			entry.SectionID = sectionIDs[idx]
 		}
-		if _, err := s.Resume.CreateEntry(entry); err != nil {
-			return out, fmt.Errorf("resume entry: %w", err)
+		if _, err := s.Resume.createEntry(tx, entry); err != nil {
+			return ImportResult{}, fmt.Errorf("resume entry: %w", err)
 		}
 		out.EntriesCreated++
 	}

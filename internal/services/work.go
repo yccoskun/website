@@ -76,7 +76,11 @@ func validateWorkInput(in WorkInput) error {
 
 // List returns all work items ordered for public display.
 func (s *WorkService) List() ([]models.WorkItem, error) {
-	rows, err := s.db.Query(
+	return s.list(s.db)
+}
+
+func (s *WorkService) list(q dbQuerier) ([]models.WorkItem, error) {
+	rows, err := q.Query(
 		`SELECT ` + workColumns + ` FROM work_items ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
@@ -88,7 +92,11 @@ func (s *WorkService) List() ([]models.WorkItem, error) {
 
 // GetByID returns a work item.
 func (s *WorkService) GetByID(id int64) (models.WorkItem, error) {
-	row := s.db.QueryRow(`SELECT `+workColumns+` FROM work_items WHERE id = ?`, id)
+	return s.getByID(s.db, id)
+}
+
+func (s *WorkService) getByID(q dbQuerier, id int64) (models.WorkItem, error) {
+	row := q.QueryRow(`SELECT `+workColumns+` FROM work_items WHERE id = ?`, id)
 	w, err := scanWorkItem(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.WorkItem{}, ErrNotFound
@@ -101,6 +109,10 @@ func (s *WorkService) GetByID(id int64) (models.WorkItem, error) {
 
 // Create inserts a work item.
 func (s *WorkService) Create(in WorkInput) (models.WorkItem, error) {
+	return s.create(s.db, in)
+}
+
+func (s *WorkService) create(q dbQuerier, in WorkInput) (models.WorkItem, error) {
 	if err := validateWorkInput(in); err != nil {
 		return models.WorkItem{}, err
 	}
@@ -108,7 +120,7 @@ func (s *WorkService) Create(in WorkInput) (models.WorkItem, error) {
 	if err != nil {
 		return models.WorkItem{}, err
 	}
-	res, err := s.db.Exec(
+	res, err := q.Exec(
 		`INSERT INTO work_items (name, one_liner, body, stack_json, status, href, sort_order)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(in.Name), in.OneLiner, in.Body, stackJSON, in.Status, in.Href, in.SortOrder,
@@ -120,7 +132,7 @@ func (s *WorkService) Create(in WorkInput) (models.WorkItem, error) {
 	if err != nil {
 		return models.WorkItem{}, fmt.Errorf("create work item id: %w", err)
 	}
-	return s.GetByID(id)
+	return s.getByID(q, id)
 }
 
 // Update replaces a work item.
@@ -148,7 +160,11 @@ func (s *WorkService) Update(id int64, in WorkInput) (models.WorkItem, error) {
 
 // Delete removes a work item.
 func (s *WorkService) Delete(id int64) error {
-	res, err := s.db.Exec(`DELETE FROM work_items WHERE id = ?`, id)
+	return s.delete(s.db, id)
+}
+
+func (s *WorkService) delete(q dbQuerier, id int64) error {
+	res, err := q.Exec(`DELETE FROM work_items WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete work item: %w", err)
 	}

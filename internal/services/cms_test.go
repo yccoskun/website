@@ -79,7 +79,7 @@ func TestPageUpsertValidatesJSON(t *testing.T) {
 		t.Fatalf("want validation error, got %v", err)
 	}
 	page, err := p.Upsert("home", services.PageInput{
-		Title: "Home",
+		Title:    "Home",
 		BodyJSON: `{"eyebrow":"Hi","headline":"H","intro":"I","domains":[],"now":""}`,
 	})
 	if err != nil {
@@ -194,6 +194,7 @@ func TestResumeSectionCRUD(t *testing.T) {
 func TestContentImport(t *testing.T) {
 	db := openCMSDB(t)
 	imp := &services.ImportService{
+		DB:       db,
 		Settings: services.NewSettingsService(db),
 		Pages:    services.NewPageService(db),
 		Work:     services.NewWorkService(db),
@@ -233,6 +234,7 @@ func TestContentImport(t *testing.T) {
 func TestContentImportFromJSONSnakeCase(t *testing.T) {
 	db := openCMSDB(t)
 	imp := &services.ImportService{
+		DB:       db,
 		Settings: services.NewSettingsService(db),
 		Pages:    services.NewPageService(db),
 		Work:     services.NewWorkService(db),
@@ -274,6 +276,7 @@ func TestContentImportFromJSONSnakeCase(t *testing.T) {
 func TestContentExportRoundTrip(t *testing.T) {
 	db := openCMSDB(t)
 	imp := &services.ImportService{
+		DB:       db,
 		Settings: services.NewSettingsService(db),
 		Pages:    services.NewPageService(db),
 		Work:     services.NewWorkService(db),
@@ -331,12 +334,231 @@ func TestContentExportRoundTrip(t *testing.T) {
 	}
 }
 
+func TestImportRollbackAfterReplaceWipe(t *testing.T) {
+	db := openCMSDB(t)
+	work := services.NewWorkService(db)
+	_, err := work.Create(services.WorkInput{Name: "keep-me", SortOrder: 1})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	imp := &services.ImportService{
+		DB:       db,
+		Settings: services.NewSettingsService(db),
+		Pages:    services.NewPageService(db),
+		Work:     work,
+		Studio:   services.NewStudioService(db),
+		Resume:   services.NewResumeService(db),
+	}
+	_, err = imp.Apply(services.ContentImport{
+		ReplaceWork: true,
+		Work: []services.WorkInput{{
+			Name: "evil", Href: "javascript:alert(1)", SortOrder: 1,
+		}},
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("want ErrValidation, got %v", err)
+	}
+	list, err := work.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "keep-me" {
+		t.Fatalf("expected keep-me preserved, got %+v", list)
+	}
+}
+
+func TestImportRollbackMidCreate(t *testing.T) {
+	db := openCMSDB(t)
+	work := services.NewWorkService(db)
+	_, err := work.Create(services.WorkInput{Name: "seed-a", SortOrder: 1})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	before, err := work.List()
+	if err != nil {
+		t.Fatalf("list before: %v", err)
+	}
+	imp := &services.ImportService{
+		DB:       db,
+		Settings: services.NewSettingsService(db),
+		Pages:    services.NewPageService(db),
+		Work:     work,
+		Studio:   services.NewStudioService(db),
+		Resume:   services.NewResumeService(db),
+	}
+	_, err = imp.Apply(services.ContentImport{
+		ReplaceWork: true,
+		Work: []services.WorkInput{
+			{Name: "valid-new", SortOrder: 1},
+			{Name: "bad", Href: "javascript:alert(1)", SortOrder: 2},
+		},
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("want ErrValidation, got %v", err)
+	}
+	after, err := work.List()
+	if err != nil {
+		t.Fatalf("list after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("len after=%d before=%d; after=%+v", len(after), len(before), after)
+	}
+	for i := range before {
+		if after[i].ID != before[i].ID || after[i].Name != before[i].Name {
+			t.Fatalf("row %d changed: before=%+v after=%+v", i, before[i], after[i])
+		}
+	}
+	for _, w := range after {
+		if w.Name == "valid-new" {
+			t.Fatalf("valid create was committed: %+v", after)
+		}
+	}
+}
+
+func TestImportStudioRollbackAfterReplaceWipe(t *testing.T) {
+	db := openCMSDB(t)
+	studio := services.NewStudioService(db)
+	_, err := studio.Create(services.StudioInput{
+		Slug: "keep-piece", Title: "Keep Piece", SortOrder: 1,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	imp := &services.ImportService{
+		DB:       db,
+		Settings: services.NewSettingsService(db),
+		Pages:    services.NewPageService(db),
+		Work:     services.NewWorkService(db),
+		Studio:   studio,
+		Resume:   services.NewResumeService(db),
+	}
+	badID := int64(99999)
+	_, err = imp.Apply(services.ContentImport{
+		ReplaceStudio: true,
+		Studio: []services.StudioInput{
+			{Slug: "ok-new", Title: "Ok New", SortOrder: 1},
+			{Slug: "bad", Title: "Bad", ImageMediaID: &badID, SortOrder: 2},
+		},
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("want ErrValidation, got %v", err)
+	}
+	list, err := studio.AdminList()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].Slug != "keep-piece" {
+		t.Fatalf("expected keep-piece preserved, got %+v", list)
+	}
+	for _, p := range list {
+		if p.Slug == "ok-new" {
+			t.Fatalf("valid studio create was committed: %+v", list)
+		}
+	}
+}
+
+func TestImportCrossDomainRollback(t *testing.T) {
+	db := openCMSDB(t)
+	settings := services.NewSettingsService(db)
+	resume := services.NewResumeService(db)
+	_, err := settings.Upsert(map[string]string{"site_name": "Original"})
+	if err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+	sec, err := resume.CreateSection(services.ResumeSectionInput{
+		Kind: models.ResumeKindExperience, Title: "Keep Section", SortOrder: 1,
+	})
+	if err != nil {
+		t.Fatalf("seed section: %v", err)
+	}
+	_, err = resume.CreateEntry(services.ResumeEntryInput{
+		SectionID: sec.ID, Org: "Keep Org", Role: "Keep Role",
+	})
+	if err != nil {
+		t.Fatalf("seed entry: %v", err)
+	}
+	sectionsBefore, err := resume.ListSections()
+	if err != nil {
+		t.Fatalf("sections before: %v", err)
+	}
+	entriesBefore, err := resume.AdminListEntries()
+	if err != nil {
+		t.Fatalf("entries before: %v", err)
+	}
+
+	imp := &services.ImportService{
+		DB:       db,
+		Settings: settings,
+		Pages:    services.NewPageService(db),
+		Work:     services.NewWorkService(db),
+		Studio:   services.NewStudioService(db),
+		Resume:   resume,
+	}
+	_, err = imp.Apply(services.ContentImport{
+		ReplaceResume: true,
+		Settings:      map[string]string{"site_name": "Should Not Stick"},
+		Sections: []services.ResumeSectionInput{{
+			Kind: models.ResumeKindEducation, Title: "Imported Edu", SortOrder: 1,
+		}},
+		Entries: []services.ResumeEntryInput{{
+			SectionID: 99, Org: "Bad", Role: "Bad",
+		}},
+	})
+	if err == nil || !errors.Is(err, services.ErrValidation) {
+		t.Fatalf("want ErrValidation, got %v", err)
+	}
+
+	pub, err := settings.Public()
+	if err != nil || pub.SiteName != "Original" {
+		t.Fatalf("settings changed: %v %+v", err, pub)
+	}
+	sectionsAfter, err := resume.ListSections()
+	if err != nil {
+		t.Fatalf("sections after: %v", err)
+	}
+	if len(sectionsAfter) != len(sectionsBefore) {
+		t.Fatalf("sections len after=%d before=%d", len(sectionsAfter), len(sectionsBefore))
+	}
+	foundKeep := false
+	for _, s := range sectionsAfter {
+		if s.ID == sec.ID && s.Title == "Keep Section" {
+			foundKeep = true
+		}
+		if s.Title == "Imported Edu" {
+			t.Fatalf("imported section committed: %+v", sectionsAfter)
+		}
+	}
+	if !foundKeep {
+		t.Fatalf("keep section missing: %+v", sectionsAfter)
+	}
+	entriesAfter, err := resume.AdminListEntries()
+	if err != nil {
+		t.Fatalf("entries after: %v", err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Fatalf("entries len after=%d before=%d", len(entriesAfter), len(entriesBefore))
+	}
+	foundOrg := false
+	for _, e := range entriesAfter {
+		if e.Org == "Keep Org" {
+			foundOrg = true
+		}
+		if e.Org == "Bad" {
+			t.Fatalf("bad entry committed: %+v", entriesAfter)
+		}
+	}
+	if !foundOrg {
+		t.Fatalf("keep entry missing: %+v", entriesAfter)
+	}
+}
+
 func TestURLAllowlistOnWrites(t *testing.T) {
 	db := openCMSDB(t)
 	settings := services.NewSettingsService(db)
 	pages := services.NewPageService(db)
 	work := services.NewWorkService(db)
 	imp := &services.ImportService{
+		DB:       db,
 		Settings: settings,
 		Pages:    pages,
 		Work:     work,
@@ -398,21 +620,21 @@ func TestURLAllowlistOnWrites(t *testing.T) {
 	}
 
 	_, err = pages.Upsert("home", services.PageInput{
-		Title: "Home",
+		Title:    "Home",
 		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"/work","label":"Work"}}],"now":""}`,
 	})
 	if err != nil {
 		t.Fatalf("good home link: %v", err)
 	}
 	_, err = pages.Upsert("home", services.PageInput{
-		Title: "Home",
+		Title:    "Home",
 		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"javascript:alert(1)","label":"X"}}],"now":""}`,
 	})
 	if err == nil || !errors.Is(err, services.ErrValidation) {
 		t.Fatalf("bad domain link: want ErrValidation, got %v", err)
 	}
 	_, err = pages.Upsert("home", services.PageInput{
-		Title: "Home",
+		Title:    "Home",
 		BodyJSON: `{"eyebrow":"","headline":"H","intro":"","domains":[{"title":"A","blurb":"b","offset":"","link":{"to":"","label":"X"}}],"now":""}`,
 	})
 	if err == nil || !errors.Is(err, services.ErrValidation) {

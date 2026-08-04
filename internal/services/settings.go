@@ -60,31 +60,38 @@ func (s *SettingsService) Upsert(in map[string]string) (map[string]string, error
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.Prepare(
+	if err := s.upsert(tx, in); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit settings upsert: %w", err)
+	}
+	return s.GetAll()
+}
+
+func (s *SettingsService) upsert(q dbQuerier, in map[string]string) error {
+	stmt, err := q.Prepare(
 		`INSERT INTO site_settings (key, value) VALUES (?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("prepare settings upsert: %w", err)
+		return fmt.Errorf("prepare settings upsert: %w", err)
 	}
 	defer func() { _ = stmt.Close() }()
 
 	for k, v := range in {
 		key := strings.TrimSpace(k)
 		if key == "" {
-			return nil, fmt.Errorf("%w: setting key is required", ErrValidation)
+			return fmt.Errorf("%w: setting key is required", ErrValidation)
 		}
 		if err := validateSettingValue(key, v); err != nil {
-			return nil, err
+			return err
 		}
 		if _, err := stmt.Exec(key, v); err != nil {
-			return nil, fmt.Errorf("upsert setting %q: %w", key, err)
+			return fmt.Errorf("upsert setting %q: %w", key, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit settings upsert: %w", err)
-	}
-	return s.GetAll()
+	return nil
 }
 
 // Public returns the public-safe settings payload with defaults when empty.

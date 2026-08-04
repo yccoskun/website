@@ -70,7 +70,7 @@ func validateStudioInput(in StudioInput) error {
 // ListPublished returns published studio pieces for the public API.
 func (s *StudioService) ListPublished() ([]models.StudioPiece, error) {
 	rows, err := s.db.Query(
-		`SELECT `+studioColumns+` FROM studio_pieces
+		`SELECT ` + studioColumns + ` FROM studio_pieces
 		 WHERE published = 1 ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
@@ -82,7 +82,11 @@ func (s *StudioService) ListPublished() ([]models.StudioPiece, error) {
 
 // AdminList returns all studio pieces.
 func (s *StudioService) AdminList() ([]models.StudioPiece, error) {
-	rows, err := s.db.Query(
+	return s.adminList(s.db)
+}
+
+func (s *StudioService) adminList(q dbQuerier) ([]models.StudioPiece, error) {
+	rows, err := q.Query(
 		`SELECT ` + studioColumns + ` FROM studio_pieces ORDER BY sort_order ASC, id ASC`,
 	)
 	if err != nil {
@@ -94,7 +98,11 @@ func (s *StudioService) AdminList() ([]models.StudioPiece, error) {
 
 // GetByID returns a studio piece by id.
 func (s *StudioService) GetByID(id int64) (models.StudioPiece, error) {
-	row := s.db.QueryRow(`SELECT `+studioColumns+` FROM studio_pieces WHERE id = ?`, id)
+	return s.getByID(s.db, id)
+}
+
+func (s *StudioService) getByID(q dbQuerier, id int64) (models.StudioPiece, error) {
+	row := q.QueryRow(`SELECT `+studioColumns+` FROM studio_pieces WHERE id = ?`, id)
 	p, err := scanStudioPiece(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.StudioPiece{}, ErrNotFound
@@ -105,9 +113,9 @@ func (s *StudioService) GetByID(id int64) (models.StudioPiece, error) {
 	return p, nil
 }
 
-func (s *StudioService) mediaExists(id int64) error {
+func (s *StudioService) mediaExists(q dbQuerier, id int64) error {
 	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM media_assets WHERE id = ?`, id).Scan(&exists)
+	err := q.QueryRow(`SELECT 1 FROM media_assets WHERE id = ?`, id).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("%w: image_media_id not found", ErrValidation)
 	}
@@ -119,11 +127,15 @@ func (s *StudioService) mediaExists(id int64) error {
 
 // Create inserts a studio piece.
 func (s *StudioService) Create(in StudioInput) (models.StudioPiece, error) {
+	return s.create(s.db, in)
+}
+
+func (s *StudioService) create(q dbQuerier, in StudioInput) (models.StudioPiece, error) {
 	if err := validateStudioInput(in); err != nil {
 		return models.StudioPiece{}, err
 	}
 	if in.ImageMediaID != nil {
-		if err := s.mediaExists(*in.ImageMediaID); err != nil {
+		if err := s.mediaExists(q, *in.ImageMediaID); err != nil {
 			return models.StudioPiece{}, err
 		}
 	}
@@ -131,7 +143,7 @@ func (s *StudioService) Create(in StudioInput) (models.StudioPiece, error) {
 	if in.Published {
 		published = 1
 	}
-	res, err := s.db.Exec(
+	res, err := q.Exec(
 		`INSERT INTO studio_pieces (slug, title, year, medium, caption, image_media_id, sort_order, published)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(in.Slug), strings.TrimSpace(in.Title), in.Year, in.Medium, in.Caption,
@@ -147,7 +159,7 @@ func (s *StudioService) Create(in StudioInput) (models.StudioPiece, error) {
 	if err != nil {
 		return models.StudioPiece{}, fmt.Errorf("create studio piece id: %w", err)
 	}
-	return s.GetByID(id)
+	return s.getByID(q, id)
 }
 
 // Update replaces a studio piece.
@@ -159,7 +171,7 @@ func (s *StudioService) Update(id int64, in StudioInput) (models.StudioPiece, er
 		return models.StudioPiece{}, err
 	}
 	if in.ImageMediaID != nil {
-		if err := s.mediaExists(*in.ImageMediaID); err != nil {
+		if err := s.mediaExists(s.db, *in.ImageMediaID); err != nil {
 			return models.StudioPiece{}, err
 		}
 	}
@@ -184,7 +196,11 @@ func (s *StudioService) Update(id int64, in StudioInput) (models.StudioPiece, er
 
 // Delete removes a studio piece.
 func (s *StudioService) Delete(id int64) error {
-	res, err := s.db.Exec(`DELETE FROM studio_pieces WHERE id = ?`, id)
+	return s.delete(s.db, id)
+}
+
+func (s *StudioService) delete(q dbQuerier, id int64) error {
+	res, err := q.Exec(`DELETE FROM studio_pieces WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete studio piece: %w", err)
 	}

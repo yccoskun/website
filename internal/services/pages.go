@@ -55,11 +55,15 @@ func scanPage(scanner interface {
 // Get returns a page by slug. Missing pages return an empty shell (not an error)
 // so public rendering can show honest empty states.
 func (s *PageService) Get(slug string) (models.Page, error) {
+	return s.get(s.db, slug)
+}
+
+func (s *PageService) get(q dbQuerier, slug string) (models.Page, error) {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
 		return models.Page{}, fmt.Errorf("%w: slug is required", ErrValidation)
 	}
-	row := s.db.QueryRow(`SELECT `+pageColumns+` FROM pages WHERE slug = ?`, slug)
+	row := q.QueryRow(`SELECT `+pageColumns+` FROM pages WHERE slug = ?`, slug)
 	p, err := scanPage(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Page{Slug: slug, BodyJSON: "{}"}, nil
@@ -94,6 +98,10 @@ func (s *PageService) List() ([]models.Page, error) {
 
 // Upsert creates or replaces a page by slug.
 func (s *PageService) Upsert(slug string, in PageInput) (models.Page, error) {
+	return s.upsert(s.db, slug, in)
+}
+
+func (s *PageService) upsert(q dbQuerier, slug string, in PageInput) (models.Page, error) {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
 		return models.Page{}, fmt.Errorf("%w: slug is required", ErrValidation)
@@ -112,7 +120,7 @@ func (s *PageService) Upsert(slug string, in PageInput) (models.Page, error) {
 		return models.Page{}, err
 	}
 
-	_, err := s.db.Exec(
+	_, err := q.Exec(
 		`INSERT INTO pages (slug, title, meta_description, body_json) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(slug) DO UPDATE SET
 		   title = excluded.title,
@@ -123,7 +131,7 @@ func (s *PageService) Upsert(slug string, in PageInput) (models.Page, error) {
 	if err != nil {
 		return models.Page{}, fmt.Errorf("upsert page: %w", err)
 	}
-	return s.Get(slug)
+	return s.get(q, slug)
 }
 
 // HomeBody is the typed home page body.

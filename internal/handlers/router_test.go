@@ -815,6 +815,7 @@ func TestSessionBindingProtectedMediaMismatch(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	router := NewRouter(spa, Deps{
+		DB:       db,
 		Posts:    services.NewPostService(db),
 		Resume:   services.NewResumeService(db).WithPages(pages, media),
 		Sessions: services.NewSessionService(db),
@@ -939,6 +940,7 @@ func newIntegrationRouter(t *testing.T, db *sql.DB, cfg config.Config) http.Hand
 	pages := services.NewPageService(db)
 	resume := services.NewResumeService(db).WithPages(pages, media)
 	return NewRouter(spa, Deps{
+		DB:       db,
 		Posts:    services.NewPostService(db),
 		Resume:   resume,
 		Sessions: services.NewSessionService(db),
@@ -1611,6 +1613,7 @@ func TestMediaAccessControl(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	router := NewRouter(spa, Deps{
+		DB:       db,
 		Posts:    posts,
 		Resume:   services.NewResumeService(db).WithPages(pages, media),
 		Sessions: services.NewSessionService(db),
