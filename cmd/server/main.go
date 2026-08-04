@@ -43,6 +43,9 @@ func main() {
 	if err := database.Migrate(db); err != nil {
 		log.Fatalf("run migrations: %v", err)
 	}
+	if err := services.BackfillMediaReferences(db); err != nil {
+		log.Fatalf("backfill media references: %v", err)
+	}
 
 	sessions := services.NewSessionService(db)
 	if err := sessions.DestroyExpired(); err != nil {

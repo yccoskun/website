@@ -722,22 +722,59 @@ func TestIsPubliclyReferenced(t *testing.T) {
 		t.Fatalf("resume pdf public = %v, err=%v, want true", ok, err)
 	}
 
-	// Digit-bounded: /media/10 must not make id=1 public.
-	_, err = posts.Create(services.PostInput{
+	// Published post media ref + unpublish/delete revoke public access.
+	postAsset, err := media.Create("post-ref.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("post asset: %v", err)
+	}
+	pubPost, err := posts.Create(services.PostInput{
 		Slug: "with-media", Title: "With Media", Summary: "s",
-		ContentMD: "See ![x](/media/10) trailing",
+		ContentMD: "See ![x](/media/" + strconv.FormatInt(postAsset.ID, 10) + ") trailing",
 		Published: true,
 	})
 	if err != nil {
 		t.Fatalf("published post: %v", err)
 	}
-	ok, err = media.IsPubliclyReferenced(10)
+	ok, err = media.IsPubliclyReferenced(postAsset.ID)
 	if err != nil || !ok {
-		t.Fatalf("post-ref id=10 public = %v, err=%v, want true", ok, err)
+		t.Fatalf("post-ref id=%d public = %v, err=%v, want true", postAsset.ID, ok, err)
 	}
-	ok, err = media.IsPubliclyReferenced(1)
+	ok, err = media.IsPubliclyReferenced(orphan.ID)
 	if err != nil || ok {
-		t.Fatalf("post-ref id=1 via /media/10 = %v, err=%v, want false", ok, err)
+		t.Fatalf("unrelated orphan public via other post-ref = %v, err=%v, want false", ok, err)
+	}
+
+	_, err = posts.Update(pubPost.ID, services.PostInput{
+		Slug: "with-media", Title: "With Media", Summary: "s",
+		ContentMD: "See ![x](/media/" + strconv.FormatInt(postAsset.ID, 10) + ") trailing",
+		Published: false,
+	})
+	if err != nil {
+		t.Fatalf("unpublish post: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(postAsset.ID)
+	if err != nil || ok {
+		t.Fatalf("unpublished post-ref public = %v, err=%v, want false", ok, err)
+	}
+
+	_, err = posts.Update(pubPost.ID, services.PostInput{
+		Slug: "with-media", Title: "With Media", Summary: "s",
+		ContentMD: "See ![x](/media/" + strconv.FormatInt(postAsset.ID, 10) + ") trailing",
+		Published: true,
+	})
+	if err != nil {
+		t.Fatalf("republish post: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(postAsset.ID)
+	if err != nil || !ok {
+		t.Fatalf("republished post-ref public = %v, err=%v, want true", ok, err)
+	}
+	if err := posts.Delete(pubPost.ID); err != nil {
+		t.Fatalf("delete post: %v", err)
+	}
+	ok, err = media.IsPubliclyReferenced(postAsset.ID)
+	if err != nil || ok {
+		t.Fatalf("deleted post-ref public = %v, err=%v, want false", ok, err)
 	}
 
 	_, err = posts.Create(services.PostInput{
@@ -772,6 +809,9 @@ func TestIsPubliclyReferenced(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("set content_html: %v", err)
+	}
+	if err := services.BackfillMediaReferences(db); err != nil {
+		t.Fatalf("backfill after html-only: %v", err)
 	}
 	ok, err = media.IsPubliclyReferenced(htmlOnly.ID)
 	if err != nil || !ok {

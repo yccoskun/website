@@ -187,7 +187,13 @@ func (s *PostService) Create(in PostInput) (models.Post, error) {
 		publishedAt = now
 	}
 
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return models.Post{}, fmt.Errorf("begin create post: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(
 		`INSERT INTO posts (slug, title, summary, content_md, content_html, published, created_at, updated_at, published_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(in.Slug), strings.TrimSpace(in.Title), in.Summary,
@@ -202,6 +208,12 @@ func (s *PostService) Create(in PostInput) (models.Post, error) {
 	id, err := res.LastInsertId()
 	if err != nil {
 		return models.Post{}, fmt.Errorf("create post id: %w", err)
+	}
+	if err := syncMediaReferences(tx, id, in.Published, in.ContentMD, html); err != nil {
+		return models.Post{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Post{}, fmt.Errorf("commit create post: %w", err)
 	}
 	return s.GetByID(id)
 }
@@ -239,7 +251,13 @@ func (s *PostService) Update(id int64, in PostInput) (models.Post, error) {
 		publishedAt = nil
 	}
 
-	_, err = s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return models.Post{}, fmt.Errorf("begin update post: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(
 		`UPDATE posts SET slug = ?, title = ?, summary = ?, content_md = ?, content_html = ?,
 		 published = ?, updated_at = ?, published_at = ? WHERE id = ?`,
 		strings.TrimSpace(in.Slug), strings.TrimSpace(in.Title), in.Summary,
@@ -251,10 +269,16 @@ func (s *PostService) Update(id int64, in PostInput) (models.Post, error) {
 		}
 		return models.Post{}, fmt.Errorf("update post: %w", err)
 	}
+	if err := syncMediaReferences(tx, id, in.Published, in.ContentMD, html); err != nil {
+		return models.Post{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.Post{}, fmt.Errorf("commit update post: %w", err)
+	}
 	return s.GetByID(id)
 }
 
-// Delete removes a post by id.
+// Delete removes a post by id. media_references rows cascade via FK.
 func (s *PostService) Delete(id int64) error {
 	res, err := s.db.Exec(`DELETE FROM posts WHERE id = ?`, id)
 	if err != nil {

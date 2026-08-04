@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/yccoskun/website/internal/models"
@@ -215,13 +214,12 @@ func (s *MediaService) URLForID(id *int64) string {
 }
 
 // IsPubliclyReferenced reports whether media id is safe to serve anonymously:
-// a published studio piece image, the resume PDF, or a digit-bounded /media/{id}
-// reference in a published post's content_md or content_html.
+// a published studio piece image, the resume PDF, or a /media/{id} reference
+// indexed from a published post.
 func (s *MediaService) IsPubliclyReferenced(id int64) (bool, error) {
 	if id <= 0 {
 		return false, nil
 	}
-	idStr := strconv.FormatInt(id, 10)
 	var n int
 	err := s.db.QueryRow(`
 		SELECT 1 WHERE EXISTS (
@@ -230,13 +228,10 @@ func (s *MediaService) IsPubliclyReferenced(id int64) (bool, error) {
 			SELECT 1 FROM pages
 			WHERE slug = 'resume' AND json_extract(body_json, '$.pdf_media_id') = ?
 		) OR EXISTS (
-			SELECT 1 FROM posts WHERE published = 1 AND (
-				content_md GLOB ('*/media/' || ? || '[^0-9]*')
-				OR content_md GLOB ('*/media/' || ?)
-				OR content_html GLOB ('*/media/' || ? || '[^0-9]*')
-				OR content_html GLOB ('*/media/' || ?)
-			)
-		)`, id, id, idStr, idStr, idStr, idStr,
+			SELECT 1 FROM media_references r
+			INNER JOIN posts p ON p.id = r.post_id
+			WHERE r.media_id = ? AND p.published = 1
+		)`, id, id, id,
 	).Scan(&n)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

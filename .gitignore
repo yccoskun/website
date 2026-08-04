@@ -54,3 +54,5 @@ internal/static/dist/*
 HANDOFF.md
 graphify-out/
 scripts/
+.chunkhound.json
+.chunkhound/
