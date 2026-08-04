@@ -1,0 +1,12 @@
+tunnel: MY_TUNNEL_ID
+credentials-file: MY_CREDENTIALS_FILE
+protocol: http2
+
+ingress:
+  - hostname: www.yusufcancoskun.com
+    service: http://127.0.0.1:8080
+  - hostname: yusufcancoskun.com
+    service: http://127.0.0.1:8080
+  - hostname: ssh.yusufcancoskun.com
+    service: ssh://127.0.0.1:22
+  - service: http_status:404

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yccoskun/website/internal/config"
 	"github.com/yccoskun/website/internal/response"
 	"github.com/yccoskun/website/internal/securitylog"
 )
@@ -22,22 +23,40 @@ type loginAttempt struct {
 	resetAt time.Time
 }
 
+// ProxyTrust decides whether a peer may present CF-Connecting-IP.
+// The zero value trusts nothing (secure default).
+type ProxyTrust struct {
+	nets []*net.IPNet
+	unix bool
+}
+
+// NewProxyTrust builds a ProxyTrust from parsed config allowlist entries.
+func NewProxyTrust(tp config.TrustedProxies) ProxyTrust {
+	return ProxyTrust{nets: tp.Nets, unix: tp.Unix}
+}
+
 // LoginRateLimiter limits login attempts per client IP.
 type LoginRateLimiter struct {
-	mu   sync.Mutex
-	hits map[string]loginAttempt
+	mu    sync.Mutex
+	hits  map[string]loginAttempt
+	trust ProxyTrust
 }
 
 // NewLoginRateLimiter constructs an in-memory per-IP login rate limiter.
-func NewLoginRateLimiter() *LoginRateLimiter {
-	return &LoginRateLimiter{hits: make(map[string]loginAttempt)}
+func NewLoginRateLimiter(trust ProxyTrust) *LoginRateLimiter {
+	return &LoginRateLimiter{hits: make(map[string]loginAttempt), trust: trust}
 }
 
 // Middleware wraps a login handler and returns 429 when the IP exceeds the limit.
 // Every request counts (failed and successful) because the limiter runs before the handler.
+// Trusted peers without a valid CF-Connecting-IP get 400 and are not counted.
 func (l *LoginRateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := ClientIP(r)
+		ip := l.trust.ClientIP(r)
+		if ip == "" {
+			response.Error(w, http.StatusBadRequest, "missing client ip")
+			return
+		}
 		if !l.allow(ip) {
 			securitylog.Default.RateLimit(ip, "/api/admin/login")
 			response.Error(w, http.StatusTooManyRequests, "too many login attempts")
@@ -98,19 +117,42 @@ func (l *LoginRateLimiter) evictIfFull() {
 	}
 }
 
-// ClientIP returns the real client IP when the peer is a trusted loopback proxy
-// and Cloudflare's CF-Connecting-IP is present and valid. Otherwise it uses
-// RemoteAddr. X-Forwarded-For is never trusted.
-func ClientIP(r *http.Request) string {
+// ClientIP returns the real client IP when the peer is on the trusted-proxy
+// allowlist and Cloudflare's CF-Connecting-IP is present and valid.
+// Trusted peers with a missing or invalid header return "" (fail closed).
+// Untrusted peers use RemoteAddr and ignore CF-Connecting-IP.
+// X-Forwarded-For is never trusted.
+func (t ProxyTrust) ClientIP(r *http.Request) string {
 	peer := peerHost(r.RemoteAddr)
-	if isTrustedProxy(peer) {
-		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
-			if ip := net.ParseIP(cf); ip != nil {
-				return ip.String()
-			}
+	if !t.trusted(r.RemoteAddr) {
+		return peer
+	}
+	cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))
+	if cf == "" {
+		return ""
+	}
+	ip := net.ParseIP(cf)
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
+
+func (t ProxyTrust) trusted(remoteAddr string) bool {
+	peer := peerHost(remoteAddr)
+	if t.unix && isUnixRemote(peer) {
+		return true
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return false
+	}
+	for _, n := range t.nets {
+		if n.Contains(ip) {
+			return true
 		}
 	}
-	return peer
+	return false
 }
 
 func peerHost(remoteAddr string) string {
@@ -121,7 +163,11 @@ func peerHost(remoteAddr string) string {
 	return host
 }
 
-func isTrustedProxy(host string) bool {
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+// isUnixRemote reports whether addr looks like a Unix-domain peer as seen by
+// net/http (abstract "@…", bare "@", or a filesystem path).
+func isUnixRemote(addr string) bool {
+	if addr == "@" || strings.HasPrefix(addr, "@") {
+		return true
+	}
+	return strings.Contains(addr, "/")
 }

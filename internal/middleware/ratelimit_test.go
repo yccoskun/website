@@ -11,11 +11,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yccoskun/website/internal/config"
 	"github.com/yccoskun/website/internal/securitylog"
 )
 
+func loopbackTrust(t *testing.T) ProxyTrust {
+	t.Helper()
+	tp, err := config.ParseTrustedProxies("127.0.0.0/8,::1/128")
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies: %v", err)
+	}
+	return NewProxyTrust(tp)
+}
+
 func TestLoginRateLimitSameIP(t *testing.T) {
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(ProxyTrust{})
 	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -68,7 +78,7 @@ func TestLoginRateLimitLogsOnlyOn429(t *testing.T) {
 	})
 
 	const wantIP = "203.0.113.10"
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(ProxyTrust{})
 	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -141,7 +151,7 @@ func rateLimitLogLines(output string) []string {
 }
 
 func TestLoginRateLimitDifferentCFConnectingIP(t *testing.T) {
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(loopbackTrust(t))
 	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -179,7 +189,7 @@ func TestLoginRateLimitDifferentCFConnectingIP(t *testing.T) {
 }
 
 func TestLoginRateLimitSpoofedHeadersIgnored(t *testing.T) {
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(ProxyTrust{})
 	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -219,57 +229,162 @@ func TestLoginRateLimitSpoofedHeadersIgnored(t *testing.T) {
 	}
 }
 
+func TestLoginRateLimitTrustedMissingCFReturns400(t *testing.T) {
+	limiter := NewLoginRateLimiter(loopbackTrust(t))
+	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("handler must not run")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+	req.RemoteAddr = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	var body struct {
+		Error *string `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error == nil || *body.Error != "missing client ip" {
+		t.Fatalf("error = %v, want %q", body.Error, "missing client ip")
+	}
+	if len(limiter.hits) != 0 {
+		t.Fatalf("hits = %d, want 0 (must not count)", len(limiter.hits))
+	}
+}
+
+func TestLoginRateLimitUntrustedLoopbackForgedCF(t *testing.T) {
+	// Empty allowlist: loopback is not trusted; forged CF must be ignored.
+	limiter := NewLoginRateLimiter(ProxyTrust{})
+	handler := limiter.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < loginRateLimitMax; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+		req.RemoteAddr = "127.0.0.1:8080"
+		req.Header.Set("CF-Connecting-IP", "198.51.100.99")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("attempt %d: status = %d, want 200", i+1, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", nil)
+	req.RemoteAddr = "127.0.0.1:8081"
+	req.Header.Set("CF-Connecting-IP", "203.0.113.1")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 keyed by 127.0.0.1", rec.Code)
+	}
+	if _, ok := limiter.hits["127.0.0.1"]; !ok {
+		t.Fatalf("hits keys = %v, want 127.0.0.1", limiter.hits)
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	t.Parallel()
 
+	trust := loopbackTrust(t)
+	empty := ProxyTrust{}
+
 	tests := []struct {
 		name       string
+		trust      ProxyTrust
 		remoteAddr string
 		cfIP       string
 		xff        string
 		want       string
 	}{
 		{
-			name:       "loopback with CF-Connecting-IP",
+			name:       "trusted peer with CF-Connecting-IP",
+			trust:      trust,
 			remoteAddr: "127.0.0.1:1234",
 			cfIP:       "198.51.100.7",
 			want:       "198.51.100.7",
 		},
 		{
-			name:       "ipv6 loopback with CF-Connecting-IP",
+			name:       "trusted ipv6 loopback with CF-Connecting-IP",
+			trust:      trust,
 			remoteAddr: "[::1]:1234",
 			cfIP:       "2001:db8::1",
 			want:       "2001:db8::1",
 		},
 		{
-			name:       "loopback without header falls back",
+			name:       "trusted peer missing CF returns empty",
+			trust:      trust,
 			remoteAddr: "127.0.0.1:1234",
-			want:       "127.0.0.1",
+			want:       "",
 		},
 		{
-			name:       "loopback ignores X-Forwarded-For",
+			name:       "trusted peer ignores X-Forwarded-For",
+			trust:      trust,
 			remoteAddr: "127.0.0.1:1234",
 			xff:        "198.51.100.8",
-			want:       "127.0.0.1",
+			want:       "",
 		},
 		{
-			name:       "loopback CF wins over X-Forwarded-For",
+			name:       "trusted CF wins over X-Forwarded-For",
+			trust:      trust,
 			remoteAddr: "127.0.0.1:1234",
 			cfIP:       "198.51.100.7",
 			xff:        "203.0.113.1",
 			want:       "198.51.100.7",
 		},
 		{
-			name:       "non-loopback ignores CF-Connecting-IP",
+			name:       "untrusted peer ignores CF-Connecting-IP",
+			trust:      trust,
 			remoteAddr: "203.0.113.9:9999",
 			cfIP:       "198.51.100.9",
 			want:       "203.0.113.9",
 		},
 		{
-			name:       "invalid CF-Connecting-IP falls back",
+			name:       "trusted peer invalid CF returns empty",
+			trust:      trust,
 			remoteAddr: "127.0.0.1:1234",
 			cfIP:       "not-an-ip",
+			want:       "",
+		},
+		{
+			name:       "loopback without allowlist ignores CF",
+			trust:      empty,
+			remoteAddr: "127.0.0.1:1234",
+			cfIP:       "198.51.100.7",
 			want:       "127.0.0.1",
+		},
+		{
+			name:       "untrusted peer with forged CF and XFF",
+			trust:      empty,
+			remoteAddr: "203.0.113.9:9999",
+			cfIP:       "198.51.100.9",
+			xff:        "198.51.100.9",
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "unix trusted with CF",
+			trust:      NewProxyTrust(mustParseProxies(t, "unix")),
+			remoteAddr: "@",
+			cfIP:       "198.51.100.7",
+			want:       "198.51.100.7",
+		},
+		{
+			name:       "unix path trusted with CF",
+			trust:      NewProxyTrust(mustParseProxies(t, "unix")),
+			remoteAddr: "/run/caddy.sock",
+			cfIP:       "198.51.100.8",
+			want:       "198.51.100.8",
+		},
+		{
+			name:       "unix without allowlist ignores CF",
+			trust:      empty,
+			remoteAddr: "@",
+			cfIP:       "198.51.100.7",
+			want:       "@",
 		},
 	}
 
@@ -284,7 +399,7 @@ func TestClientIP(t *testing.T) {
 			if tt.xff != "" {
 				req.Header.Set("X-Forwarded-For", tt.xff)
 			}
-			got := ClientIP(req)
+			got := tt.trust.ClientIP(req)
 			if got != tt.want {
 				t.Fatalf("ClientIP = %q, want %q", got, tt.want)
 			}
@@ -292,8 +407,17 @@ func TestClientIP(t *testing.T) {
 	}
 }
 
+func mustParseProxies(t *testing.T, s string) config.TrustedProxies {
+	t.Helper()
+	tp, err := config.ParseTrustedProxies(s)
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies(%q): %v", s, err)
+	}
+	return tp
+}
+
 func TestPruneExpiredEntries(t *testing.T) {
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(ProxyTrust{})
 	now := time.Now()
 	limiter.hits["expired"] = loginAttempt{count: 5, resetAt: now.Add(-time.Minute)}
 	limiter.hits["active"] = loginAttempt{count: 1, resetAt: now.Add(time.Minute)}
@@ -311,7 +435,7 @@ func TestPruneExpiredEntries(t *testing.T) {
 }
 
 func TestAllowEvictsWhenFull(t *testing.T) {
-	limiter := NewLoginRateLimiter()
+	limiter := NewLoginRateLimiter(ProxyTrust{})
 	now := time.Now()
 	limiter.mu.Lock()
 	for i := 0; i < loginRateLimitMaxEntries; i++ {

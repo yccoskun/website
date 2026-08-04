@@ -39,12 +39,12 @@ Ownership by hop:
 | Hop | Role |
 |-----|------|
 | **Cloudflare** | Edge / WAF / volumetric rate limiting (preferred first line of defense). |
-| **Go app** | Login-attempt throttle on `POST /api/admin/login`: ~10 attempts / 15 minutes **per real client IP**. When the peer is loopback (Caddy), the app keys on `CF-Connecting-IP`; otherwise it uses `RemoteAddr`. Failed and successful attempts both count. |
+| **Go app** | Login-attempt throttle on `POST /api/admin/login`: ~10 attempts / 15 minutes **per real client IP**. When the peer matches `TRUSTED_PROXIES`, the app keys on a valid `CF-Connecting-IP`; otherwise it uses `RemoteAddr`. Failed and successful attempts both count. A trusted peer with a missing/invalid `CF-Connecting-IP` gets **400** and is not counted. |
 | **Caddy** | Strips spoofable client IP headers (`X-Forwarded-For`, `X-Real-IP`) and forwards Cloudflare’s `CF-Connecting-IP`. Does **not** own rate limits. |
 
-Do **not** trust raw `X-Forwarded-For` from the public internet without a trusted hop. The app never keys the login limiter on `X-Forwarded-For`.
+Do **not** trust raw `X-Forwarded-For` from the public internet without a trusted hop. The app never keys the login limiter on `X-Forwarded-For` and never reads that header for client IP.
 
-Trust boundary: the Go process binds loopback only, so the only peers that can present `CF-Connecting-IP` are local proxies (Caddy). A process on the same host could spoof that header; that is accepted for this single-tenant deploy.
+Trust boundary: only peers on the explicit `TRUSTED_PROXIES` allowlist may present `CF-Connecting-IP`. Empty `TRUSTED_PROXIES` (the default) means **no** proxy trust — loopback peers are not special. Same-host processes can no longer spoof client IP via that header unless you deliberately allowlist them.
 
 ## Security logging
 
@@ -222,11 +222,39 @@ set. Write `/etc/website.env` (mode `0640`, owned `root:deploy`):
 ```bash
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=$2a$12$...   # prefer: go run ./cmd/hashpw (interactive); automation: go run ./cmd/hashpw < /path/to/secret (mode 0600); argv rejected — avoid inline secrets in shell commands
+# Required for Caddy → Go on loopback so login rate limits / session binding
+# key on CF-Connecting-IP (empty = no proxy trust; all clients share 127.0.0.1).
+TRUSTED_PROXIES=127.0.0.0/8,::1/128
 ```
 
 `ADDR` (default `127.0.0.1:9000`), `DB_PATH` (default `data/website.db`), and
 `SITE_URL` (default `https://www.yusufcancoskun.com`) all have correct defaults
-for this server and can be omitted.
+for this server and can be omitted. Do **not** omit `TRUSTED_PROXIES` in
+production behind Caddy — see below.
+
+### Trusted proxies (`TRUSTED_PROXIES`)
+
+Comma-separated allowlist of peers permitted to present `CF-Connecting-IP`.
+Empty (default) means **no** proxy trust: the app always uses `RemoteAddr` and
+ignores `CF-Connecting-IP`. Invalid entries cause the process to refuse to
+start.
+
+Tokens:
+
+| Token | Meaning |
+|-------|---------|
+| CIDR | e.g. `127.0.0.1/32`, `127.0.0.0/8`, `::1/128` |
+| Bare IP | Normalized to `/32` (IPv4) or `/128` (IPv6) |
+| `unix` | Trust Unix-domain peers (`RemoteAddr` `@…` or a socket path) |
+
+Typical Caddy → Go over loopback TCP:
+
+```bash
+TRUSTED_PROXIES=127.0.0.0/8,::1/128
+```
+
+`X-Forwarded-For` is never trusted, regardless of this allowlist. Caddyfile
+forwarding of `CF-Connecting-IP` is unchanged.
 
 Production always serves the **embedded** frontend build (compiled into the
 binary from `internal/static/dist`). Do **not** set `STATIC_DIR` or
@@ -309,6 +337,9 @@ cookies (see `internal/auth/`, `internal/services/sessions.go`):
       hash lookup. No JWT or other self-contained/stateless token format.
 - [ ] **Env file** — `/etc/website.env` stays mode `0640`, owned
       `root:deploy` (see [Environment file](#environment-file) above).
+- [ ] **Trusted proxies** — production behind Caddy sets
+      `TRUSTED_PROXIES` (e.g. `127.0.0.0/8,::1/128`) so login rate limits and
+      session binding key on `CF-Connecting-IP`, not a shared loopback peer.
 
 ### Auth trust boundary
 

@@ -24,6 +24,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func testTrustedProxies(t *testing.T) config.TrustedProxies {
+	t.Helper()
+	tp, err := config.ParseTrustedProxies("127.0.0.0/8,::1/128")
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies: %v", err)
+	}
+	return tp
+}
+
 func newTestRouter() http.Handler {
 	spa := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -668,6 +677,7 @@ func TestSessionBindingLoginThenMe(t *testing.T) {
 		AdminUsername:     "admin",
 		AdminPasswordHash: string(hash),
 		SessionBinding:    true,
+		TrustedProxies:    testTrustedProxies(t),
 	}
 	router := newIntegrationRouter(t, db, cfg)
 
@@ -722,6 +732,7 @@ func TestSessionBindingSpoofedIPAfterLogin(t *testing.T) {
 		AdminUsername:     "admin",
 		AdminPasswordHash: string(hash),
 		SessionBinding:    true,
+		TrustedProxies:    testTrustedProxies(t),
 	}
 	router := newIntegrationRouter(t, db, cfg)
 
@@ -758,6 +769,7 @@ func TestSessionBindingLoginRejectsEmptyUA(t *testing.T) {
 		AdminUsername:     "admin",
 		AdminPasswordHash: string(hash),
 		SessionBinding:    true,
+		TrustedProxies:    testTrustedProxies(t),
 	}
 	router := newIntegrationRouter(t, db, cfg)
 
@@ -791,6 +803,7 @@ func TestSessionBindingProtectedMediaMismatch(t *testing.T) {
 		AdminUsername:     "admin",
 		AdminPasswordHash: string(hash),
 		SessionBinding:    true,
+		TrustedProxies:    testTrustedProxies(t),
 	}
 	uploads := filepath.Join(t.TempDir(), "uploads")
 	media, err := services.NewMediaService(db, uploads)

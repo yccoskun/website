@@ -28,6 +28,10 @@ type Deps struct {
 	Config   config.Config
 }
 
+func (d Deps) clientIP(r *http.Request) string {
+	return middleware.NewProxyTrust(d.Config.TrustedProxies).ClientIP(r)
+}
+
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -167,18 +171,18 @@ func (d Deps) AdminLogin(w http.ResponseWriter, r *http.Request) {
 		d.Config.AdminPasswordHash != "" &&
 		auth.ConstantTimeUsernameEqual(body.Username, d.Config.AdminUsername)
 	if !userOK || !passOK {
-		securitylog.Default.LoginFailure(middleware.ClientIP(r), r.URL.Path)
+		securitylog.Default.LoginFailure(d.clientIP(r), r.URL.Path)
 		response.Error(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	token, expires, err := d.Sessions.Create(r.UserAgent(), middleware.ClientIP(r), d.Config.SessionBinding)
+	token, expires, err := d.Sessions.Create(r.UserAgent(), d.clientIP(r), d.Config.SessionBinding)
 	if err != nil {
 		mapServiceError(w, err)
 		return
 	}
 	auth.SetSessionCookie(w, r, token, expires)
-	securitylog.Default.LoginSuccess(middleware.ClientIP(r), r.URL.Path)
+	securitylog.Default.LoginSuccess(d.clientIP(r), r.URL.Path)
 	response.JSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

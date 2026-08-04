@@ -74,7 +74,7 @@ func TestRequireSessionRejectsDisallowedSecFetchSite(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := RequireSession(sessions, false, next)
+	handler := RequireSession(sessions, false, ProxyTrust{}, next)
 
 	cases := []struct {
 		name   string
@@ -114,7 +114,7 @@ func TestRequireSessionAllowsSameOriginAndMissing(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := RequireSession(sessions, false, next)
+	handler := RequireSession(sessions, false, ProxyTrust{}, next)
 
 	cases := []struct {
 		name string
@@ -146,7 +146,7 @@ func TestRequireSessionAllowsSameOriginAndMissing(t *testing.T) {
 func TestRequireSessionUnauthorizedWithoutCookie(t *testing.T) {
 	db := openSessionTestDB(t)
 	sessions := services.NewSessionService(db)
-	handler := RequireSession(sessions, false, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequireSession(sessions, false, ProxyTrust{}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -169,7 +169,7 @@ func TestRequireSessionBindingMismatchClearsCookie(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	handler := RequireSession(sessions, true, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequireSession(sessions, true, loopbackTrust(t), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -242,7 +242,7 @@ func TestRequireSessionBindingMatchOK(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	handler := RequireSession(sessions, true, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequireSession(sessions, true, loopbackTrust(t), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -266,7 +266,7 @@ func TestRequireSessionBindingFlagOffIgnoresMismatch(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 
-	handler := RequireSession(sessions, false, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequireSession(sessions, false, ProxyTrust{}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

@@ -35,7 +35,7 @@ func allowedSecFetchSite(site string) bool {
 // When bindingEnabled is true and the session was created with both UA and
 // IP-prefix hashes, a mismatch destroys the session, clears the cookie, and
 // returns 401 with message reauth_required.
-func RequireSession(sessions *services.SessionService, bindingEnabled bool, next http.Handler) http.Handler {
+func RequireSession(sessions *services.SessionService, bindingEnabled bool, trust ProxyTrust, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Authenticated admin JSON must not be stored by shared caches.
 		w.Header().Set("Cache-Control", "private, no-store")
@@ -48,7 +48,8 @@ func RequireSession(sessions *services.SessionService, bindingEnabled bool, next
 			return
 		}
 		token := auth.SessionToken(r)
-		ok, mismatch, err := sessions.Validate(token, r.UserAgent(), ClientIP(r), bindingEnabled)
+		clientIP := trust.ClientIP(r)
+		ok, mismatch, err := sessions.Validate(token, r.UserAgent(), clientIP, bindingEnabled)
 		if err != nil {
 			response.Error(w, http.StatusInternalServerError, "internal error")
 			return
@@ -56,7 +57,7 @@ func RequireSession(sessions *services.SessionService, bindingEnabled bool, next
 		if mismatch {
 			_ = sessions.Destroy(token)
 			auth.ClearSessionCookie(w, r)
-			securitylog.Event(securitylog.EventSessionBindingMismatch, ClientIP(r), "route", r.URL.Path)
+			securitylog.Event(securitylog.EventSessionBindingMismatch, clientIP, "route", r.URL.Path)
 			response.Error(w, http.StatusUnauthorized, "reauth_required")
 			return
 		}

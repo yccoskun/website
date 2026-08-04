@@ -32,11 +32,12 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 	api.HandleFunc("GET /api/studio", deps.ListStudio)
 	mux.HandleFunc("GET /media/{id}", deps.ServeMedia)
 
-	loginLimiter := middleware.NewLoginRateLimiter()
+	trust := middleware.NewProxyTrust(deps.Config.TrustedProxies)
+	loginLimiter := middleware.NewLoginRateLimiter(trust)
 	api.Handle("POST /api/admin/login", loginLimiter.Middleware(http.HandlerFunc(deps.AdminLogin)))
 
 	requireAuth := func(h http.HandlerFunc) http.Handler {
-		return middleware.RequireSession(deps.Sessions, deps.Config.SessionBinding, h)
+		return middleware.RequireSession(deps.Sessions, deps.Config.SessionBinding, trust, h)
 	}
 
 	api.Handle("POST /api/admin/logout", http.HandlerFunc(deps.AdminLogout))
