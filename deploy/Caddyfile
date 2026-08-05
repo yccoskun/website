@@ -19,11 +19,8 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 	reverse_proxy 127.0.0.1:9000 {
-		# Drop client-spoofable IP headers, then set CF-Connecting-IP only from
-		# the inbound value Cloudflare/cloudflared already attached (not XFF).
+		# Drop client-spoofable IP headers.
 		header_up -X-Forwarded-For
 		header_up -X-Real-IP
-		header_up -CF-Connecting-IP
-		header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}
 	}
 }
