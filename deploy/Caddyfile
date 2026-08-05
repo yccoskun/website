@@ -19,7 +19,11 @@
 		Referrer-Policy strict-origin-when-cross-origin
 	}
 	reverse_proxy 127.0.0.1:9000 {
-		# Drop client-spoofable IP headers.
+		# Drop spoofable client IP headers. Leave CF-Connecting-IP alone:
+		# reverse_proxy passes it through from cloudflared by default. Do not
+		# delete-and-readd via header_up placeholders — that can send an empty
+		# CF header upstream and Go returns 400 "missing client ip" when
+		# TRUSTED_PROXIES trusts loopback.
 		header_up -X-Forwarded-For
 		header_up -X-Real-IP
 	}

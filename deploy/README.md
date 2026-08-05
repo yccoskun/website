@@ -40,7 +40,7 @@ Ownership by hop:
 |-----|------|
 | **Cloudflare** | Edge / WAF / volumetric rate limiting (preferred first line of defense). |
 | **Go app** | Login-attempt throttle on `POST /api/admin/login`: ~10 attempts / 15 minutes **per real client IP**. When the peer matches `TRUSTED_PROXIES`, the app keys on a valid `CF-Connecting-IP`; otherwise it uses `RemoteAddr`. Failed and successful attempts both count. A trusted peer with a missing/invalid `CF-Connecting-IP` gets **400** and is not counted. |
-| **Caddy** | Strips spoofable client IP headers (`X-Forwarded-For`, `X-Real-IP`) and forwards Cloudflare’s `CF-Connecting-IP`. Does **not** own rate limits. |
+| **Caddy** | Strips spoofable client IP headers (`X-Forwarded-For`, `X-Real-IP`). `CF-Connecting-IP` reaches Go by **passthrough** from cloudflared (default `reverse_proxy` behavior) — do not delete-and-readd it with `header_up` placeholders (empty CF → Go `400 missing client ip` when loopback is trusted). Does **not** own rate limits. |
 
 Do **not** trust raw `X-Forwarded-For` from the public internet without a trusted hop. The app never keys the login limiter on `X-Forwarded-For` and never reads that header for client IP.
 
@@ -263,8 +263,9 @@ Typical Caddy → Go over loopback TCP:
 TRUSTED_PROXIES=127.0.0.0/8,::1/128
 ```
 
-`X-Forwarded-For` is never trusted, regardless of this allowlist. Caddyfile
-forwarding of `CF-Connecting-IP` is unchanged.
+`X-Forwarded-For` is never trusted, regardless of this allowlist. Caddy must
+passthrough `CF-Connecting-IP` from cloudflared (see `deploy/Caddyfile`); do
+not strip-and-reset that header with placeholders.
 
 Production always serves the **embedded** frontend build (compiled into the
 binary from `internal/static/dist`). Do **not** set `STATIC_DIR` or
