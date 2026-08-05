@@ -10,12 +10,12 @@ import (
 	"github.com/yccoskun/website/internal/services"
 )
 
-// allowedSecFetchSite reports whether Sec-Fetch-Site is permitted for
-// authenticated admin APIs. Empty (missing) is allowed for non-browser
-// clients (curl, tests, scripts). Browsers send one of same-origin,
-// same-site, or none for legitimate same-site navigation/fetch; any other
-// value (including cross-site and garbage) is rejected.
-func allowedSecFetchSite(site string) bool {
+// AllowedSecFetchSite reports whether Sec-Fetch-Site is permitted for
+// authenticated admin APIs and protected media. Empty (missing) is allowed
+// for non-browser clients (curl, tests, scripts). Browsers send one of
+// same-origin, same-site, or none for legitimate same-site navigation/fetch;
+// any other value (including cross-site and garbage) is rejected.
+func AllowedSecFetchSite(site string) bool {
 	switch strings.ToLower(site) {
 	case "", "same-origin", "same-site", "none":
 		return true
@@ -39,7 +39,7 @@ func RequireSession(sessions *services.SessionService, bindingEnabled bool, trus
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Authenticated admin JSON must not be stored by shared caches.
 		w.Header().Set("Cache-Control", "private, no-store")
-		if !allowedSecFetchSite(r.Header.Get("Sec-Fetch-Site")) {
+		if !AllowedSecFetchSite(r.Header.Get("Sec-Fetch-Site")) {
 			response.Error(w, http.StatusForbidden, "forbidden")
 			return
 		}

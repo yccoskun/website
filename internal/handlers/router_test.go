@@ -1591,6 +1591,166 @@ func legacySessionCleared(rec *httptest.ResponseRecorder) bool {
 	return false
 }
 
+func TestProtectedMediaSecFetchSite(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	cfg := config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	}
+	uploads := filepath.Join(t.TempDir(), "uploads")
+	media, err := services.NewMediaService(db, uploads)
+	if err != nil {
+		t.Fatalf("media: %v", err)
+	}
+	pages := services.NewPageService(db)
+	studio := services.NewStudioService(db)
+	spa := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := NewRouter(spa, Deps{
+		DB:       db,
+		Posts:    services.NewPostService(db),
+		Resume:   services.NewResumeService(db).WithPages(pages, media),
+		Sessions: services.NewSessionService(db),
+		Settings: services.NewSettingsService(db),
+		Pages:    pages,
+		Work:     services.NewWorkService(db),
+		Studio:   studio,
+		Media:    media,
+		Config:   cfg,
+	})
+
+	png := []byte("\x89PNG\r\n\x1a\n")
+	orphan, err := media.Create("orphan.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("orphan: %v", err)
+	}
+	pubAsset, err := media.Create("pub.png", "image/png", bytes.NewReader(png), int64(len(png)))
+	if err != nil {
+		t.Fatalf("pub asset: %v", err)
+	}
+	_, err = studio.Create(services.StudioInput{
+		Slug: "pub-still", Title: "Pub", ImageMediaID: &pubAsset.ID, Published: true,
+	})
+	if err != nil {
+		t.Fatalf("pub studio: %v", err)
+	}
+
+	loginBody := bytes.NewBufferString(`{"username":"admin","password":"testpass"}`)
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/admin/login", loginBody)
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	router.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", loginRec.Code)
+	}
+	cookie := sessionCookie(loginRec)
+	if cookie == "" {
+		t.Fatal("expected session cookie")
+	}
+
+	orphanPath := "/media/" + strconv.FormatInt(orphan.ID, 10)
+	pubPath := "/media/" + strconv.FormatInt(pubAsset.ID, 10)
+
+	t.Run("protected cross-site with session forbidden", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, orphanPath, nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusForbidden, `{"data":null,"error":"forbidden"}`)
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "private") || !strings.Contains(cc, "no-store") {
+			t.Fatalf("Cache-Control = %q, want private no-store", cc)
+		}
+		if bytes.Equal(rec.Body.Bytes(), png) {
+			t.Fatal("body must not be file bytes")
+		}
+	})
+
+	for _, site := range []string{"same-origin", "", "same-site", "none"} {
+		name := site
+		if name == "" {
+			name = "missing"
+		}
+		t.Run("protected allowed Sec-Fetch-Site "+name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, orphanPath, nil)
+			req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+			if site != "" {
+				req.Header.Set("Sec-Fetch-Site", site)
+			}
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if !bytes.Equal(rec.Body.Bytes(), png) {
+				t.Fatalf("body = %q, want file bytes", rec.Body.Bytes())
+			}
+			cc := rec.Header().Get("Cache-Control")
+			if !strings.Contains(cc, "private") || !strings.Contains(cc, "no-store") {
+				t.Fatalf("Cache-Control = %q, want private no-store", cc)
+			}
+		})
+	}
+
+	t.Run("public cross-site without session allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, pubPath, nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), png) {
+			t.Fatalf("body = %q, want file bytes", rec.Body.Bytes())
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "public") || !strings.Contains(cc, "max-age=300") {
+			t.Fatalf("Cache-Control = %q, want public max-age=300", cc)
+		}
+	})
+
+	t.Run("protected cross-site without session not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, orphanPath, nil)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 (anon denial, no existence leak)", rec.Code)
+		}
+		cc := rec.Header().Get("Cache-Control")
+		if !strings.Contains(cc, "no-store") {
+			t.Fatalf("Cache-Control = %q, want no-store on denial 404", cc)
+		}
+	})
+
+	t.Run("protected missing Sec-Fetch without session not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, orphanPath, nil)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("protected evil Sec-Fetch with session forbidden", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, orphanPath, nil)
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		req.Header.Set("Sec-Fetch-Site", "evil")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		assertEnvelope(t, rec, http.StatusForbidden, `{"data":null,"error":"forbidden"}`)
+		if bytes.Equal(rec.Body.Bytes(), png) {
+			t.Fatal("body must not be file bytes")
+		}
+	})
+}
+
 func TestMediaAccessControl(t *testing.T) {
 	db := openTestDB(t)
 	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)

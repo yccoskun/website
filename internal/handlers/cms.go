@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/yccoskun/website/internal/auth"
+	"github.com/yccoskun/website/internal/middleware"
 	"github.com/yccoskun/website/internal/models"
 	"github.com/yccoskun/website/internal/response"
 	"github.com/yccoskun/website/internal/securitylog"
@@ -101,6 +102,8 @@ func (d Deps) ListStudio(w http.ResponseWriter, _ *http.Request) {
 // ServeMedia serves GET /media/{id}.
 // Public assets (published studio, resume PDF, published post refs) are cacheable.
 // Protected assets require a valid admin session; anonymous callers get 404.
+// Authenticated protected media is also gated by Sec-Fetch-Site (same allowlist
+// as RequireSession) so cross-site credentialed fetches cannot stream the file.
 func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -148,6 +151,11 @@ func (d Deps) ServeMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		if !ok {
 			mediaNotFound(w, r)
+			return
+		}
+		if !middleware.AllowedSecFetchSite(r.Header.Get("Sec-Fetch-Site")) {
+			w.Header().Set("Cache-Control", "private, no-store")
+			response.Error(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		cacheControl = "private, no-store"
