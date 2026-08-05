@@ -5,7 +5,10 @@ import "net/http"
 // SecurityHeaders adds baseline browser security headers, including a
 // restrictive Content-Security-Policy (default-src/script-src/style-src
 // 'self'; no unsafe-inline/unsafe-eval). The theme boot inline script is
-// allowed only via script-src 'sha256-...'. Cloudflare owns HSTS at the
+// allowed only via script-src 'sha256-...'. Cloudflare Web Analytics
+// (edge-injected beacon) needs script-src static.cloudflareinsights.com;
+// connect-src keeps 'self' for automatic /cdn-cgi/rum and adds
+// cloudflareinsights.com for manual embeds. Cloudflare owns HSTS at the
 // edge; Go must not set it (avoids localhost / non-edge conflict).
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -15,7 +18,7 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self' 'sha256-d09nNKWklfcIveyWn6g0V92ntPlklT3aFfWoUppLn4Q='; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+			"default-src 'self'; script-src 'self' 'sha256-d09nNKWklfcIveyWn6g0V92ntPlklT3aFfWoUppLn4Q=' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 		)
 		next.ServeHTTP(w, r)
 	})

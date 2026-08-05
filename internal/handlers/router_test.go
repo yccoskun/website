@@ -92,6 +92,15 @@ func assertSecurityHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
 	if !strings.Contains(csp, "sha256-") {
 		t.Fatalf("Content-Security-Policy = %q, want sha256- token for theme boot", csp)
 	}
+	if !strings.Contains(csp, "https://static.cloudflareinsights.com") {
+		t.Fatalf("Content-Security-Policy = %q, want Cloudflare Insights script-src host", csp)
+	}
+	if !strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("Content-Security-Policy = %q, want connect-src 'self'", csp)
+	}
+	if !strings.Contains(csp, "https://cloudflareinsights.com") {
+		t.Fatalf("Content-Security-Policy = %q, want Cloudflare Insights connect-src host", csp)
+	}
 	if strings.Contains(csp, "unsafe-inline") {
 		t.Fatalf("Content-Security-Policy = %q, must not include unsafe-inline", csp)
 	}
