@@ -66,6 +66,42 @@ func TestLoadSessionBindingEnabled(t *testing.T) {
 	}
 }
 
+func TestShouldWarnMissingSessionBinding(t *testing.T) {
+	t.Parallel()
+
+	withNet, err := ParseTrustedProxies("127.0.0.0/8")
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies: %v", err)
+	}
+	unixOnly, err := ParseTrustedProxies("unix")
+	if err != nil {
+		t.Fatalf("ParseTrustedProxies: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		sessionBinding bool
+		tp             TrustedProxies
+		want           bool
+	}{
+		{name: "binding on empty proxies", sessionBinding: true, want: false},
+		{name: "binding on with nets", sessionBinding: true, tp: withNet, want: false},
+		{name: "binding off empty proxies", sessionBinding: false, want: false},
+		{name: "binding off with nets", sessionBinding: false, tp: withNet, want: true},
+		{name: "binding off unix only", sessionBinding: false, tp: unixOnly, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ShouldWarnMissingSessionBinding(tt.sessionBinding, tt.tp); got != tt.want {
+				t.Fatalf("ShouldWarnMissingSessionBinding(%v, %+v) = %v, want %v",
+					tt.sessionBinding, tt.tp, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseTrustedProxies(t *testing.T) {
 	t.Parallel()
 

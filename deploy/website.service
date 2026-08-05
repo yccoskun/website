@@ -8,6 +8,7 @@ Group=deploy
 WorkingDirectory=/opt/website
 ExecStart=/opt/website/website
 EnvironmentFile=-/etc/website.env
+Environment=SESSION_BINDING=1
 Restart=on-failure
 RestartSec=2
 

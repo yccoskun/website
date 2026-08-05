@@ -22,6 +22,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	if cfg.SessionBinding {
+		log.Printf("session binding enabled")
+	} else {
+		log.Printf("session binding disabled")
+	}
+	if config.ShouldWarnMissingSessionBinding(cfg.SessionBinding, cfg.TrustedProxies) {
+		log.Printf("warning: TRUSTED_PROXIES is set without SESSION_BINDING; production should enable session binding")
+	}
 
 	staticDir, err := static.ResolveOverride(cfg.StaticDir, cfg.AllowStaticDir)
 	if err != nil {

@@ -217,7 +217,15 @@ unfamiliar IPs or off-hours bulk `export`/`import` deserve a closer look.
 ## Environment file
 
 Admin login is disabled until `ADMIN_USERNAME` and `ADMIN_PASSWORD_HASH` are
-set. Write `/etc/website.env` (mode `0640`, owned `root:deploy`):
+set. Write `/etc/website.env` (mode `0640`, owned `root:deploy`). A full
+annotated template is in [`website.env.example`](website.env.example):
+
+```bash
+sudo cp deploy/website.env.example /etc/website.env
+# edit secrets, then chown root:deploy and chmod 0640
+```
+
+Minimal production example:
 
 ```bash
 ADMIN_USERNAME=admin
@@ -225,6 +233,8 @@ ADMIN_PASSWORD_HASH=$2a$12$...   # prefer: go run ./cmd/hashpw (interactive); au
 # Required for Caddy → Go on loopback so login rate limits / session binding
 # key on CF-Connecting-IP (empty = no proxy trust; all clients share 127.0.0.1).
 TRUSTED_PROXIES=127.0.0.0/8,::1/128
+# Required in production; match unit Environment= (env file overrides unit).
+SESSION_BINDING=1
 ```
 
 `ADDR` (default `127.0.0.1:9000`), `DB_PATH` (default `data/website.db`), and
@@ -280,17 +290,31 @@ EnvironmentFile=-/etc/website.env
 
 Then `sudo systemctl daemon-reload && sudo systemctl restart website`.
 
-### Soft session binding (optional)
+### Soft session binding (required in production)
 
-Off by default. To bind admin sessions to a User-Agent hash and an IP prefix
-hash (IPv4 `/24` or IPv6 `/48`, derived via `ClientIP`), add to `/etc/website.env`:
+**Production:** required. The reference `website.service` sets
+`Environment=SESSION_BINDING=1`. Per systemd.exec, `EnvironmentFile=`
+overrides `Environment=`: the unit value applies when `/etc/website.env`
+omits the key, but a falsy `SESSION_BINDING` in the env file defeats the
+unit. Put `SESSION_BINDING=1` in `/etc/website.env` (or omit the key so
+the unit value applies); never leave a falsy value in production. Local
+development may leave it unset (off by default).
+
+Truthy values: `1`, `true`, `yes` (case-insensitive). Restart the unit after
+changing the file.
 
 ```bash
 SESSION_BINDING=1
 ```
 
-Truthy values: `1`, `true`, `yes` (case-insensitive). Restart the unit after
-changing the file.
+Binding uses `ClientIP` for the IP prefix hash (IPv4 `/24` or IPv6 `/48`)
+and the request User-Agent for the UA hash. Production behind Caddy **must**
+set `TRUSTED_PROXIES` (already required) so binding keys on
+`CF-Connecting-IP`. With an empty allowlist (no proxy trust), `ClientIP` is
+`RemoteAddr` — behind Caddy on loopback, sessions bind to the shared
+loopback peer. With `TRUSTED_PROXIES` set, binding uses `CF-Connecting-IP`;
+trusted peers with a missing or invalid `CF-Connecting-IP` fail closed at
+login (empty `ClientIP`).
 
 When enabled, login stores SHA-256 hex of the UA and of the IP prefix — never
 raw UA/IP. Login fails closed if either hint is missing (empty User-Agent or
@@ -302,12 +326,12 @@ There is **no** account lockout — only re-login.
 
 With the flag off, login does not store binding hashes (NULL columns). Sessions
 created while the flag was off (or before this feature) keep expiry-only
-validation even after you enable the flag, until the next login.
+validation even after you enable the flag, until the next login. After
+enabling in production, **re-login** so new sessions store binding hashes.
 
 **False-positive risks:** CGNAT `/24` churn, mobile carrier IP handoffs, and
 privacy browsers that rotate User-Agent can force an unexpected re-login.
-Prefer leaving this off unless you accept that friction for a single-operator
-admin surface.
+Accept that friction for the single-operator admin surface in production.
 
 ## Cryptographic posture
 
@@ -340,6 +364,11 @@ cookies (see `internal/auth/`, `internal/services/sessions.go`):
 - [ ] **Trusted proxies** — production behind Caddy sets
       `TRUSTED_PROXIES` (e.g. `127.0.0.0/8,::1/128`) so login rate limits and
       session binding key on `CF-Connecting-IP`, not a shared loopback peer.
+- [ ] **Session binding** — production: unit always sets
+      `Environment=SESSION_BINDING=1`; env file should match `1` (or omit
+      the key) so it does not override off. After enabling, re-login so
+      sessions store UA/IP prefix hashes (older NULL-hash sessions stay
+      expiry-only until then).
 
 ### Auth trust boundary
 

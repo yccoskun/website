@@ -110,6 +110,12 @@ func ParseTrustedProxies(s string) (TrustedProxies, error) {
 	return out, nil
 }
 
+// ShouldWarnMissingSessionBinding reports whether trusted proxies are
+// configured (Nets non-empty or Unix) while session binding is off.
+func ShouldWarnMissingSessionBinding(sessionBinding bool, tp TrustedProxies) bool {
+	return !sessionBinding && (len(tp.Nets) > 0 || tp.Unix)
+}
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
