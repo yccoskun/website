@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
@@ -13,10 +14,14 @@ import (
 )
 
 const (
-	loginRateLimitMax        = 10
-	loginRateLimitWindow     = 15 * time.Minute
-	loginRateLimitMaxEntries = 10_000
+	loginRateLimitMax          = 10
+	loginRateLimitWindow       = 15 * time.Minute
+	loginRateLimitMaxEntries   = 10_000
+	loginRateLimitPruneDefault = time.Minute
 )
+
+// Overridable in tests via t.Cleanup restore.
+var loginRateLimitPruneInterval = loginRateLimitPruneDefault
 
 type loginAttempt struct {
 	count   int
@@ -47,6 +52,24 @@ func NewLoginRateLimiter(trust ProxyTrust) *LoginRateLimiter {
 	return &LoginRateLimiter{hits: make(map[string]loginAttempt), trust: trust}
 }
 
+// RunPruneLoop periodically removes expired IP entries until ctx is cancelled.
+// Not started by NewLoginRateLimiter; callers must start it when desired.
+func (l *LoginRateLimiter) RunPruneLoop(ctx context.Context) {
+	ticker := time.NewTicker(loginRateLimitPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			l.mu.Lock()
+			l.pruneExpired(now)
+			l.mu.Unlock()
+		}
+	}
+}
+
 // Middleware wraps a login handler and returns 429 when the IP exceeds the limit.
 // Every request counts (failed and successful) because the limiter runs before the handler.
 // Trusted peers without a valid CF-Connecting-IP get 400 and are not counted.
@@ -71,12 +94,14 @@ func (l *LoginRateLimiter) allow(ip string) bool {
 	defer l.mu.Unlock()
 
 	now := time.Now()
-	l.pruneExpired(now)
 
 	a, ok := l.hits[ip]
 	if !ok || now.After(a.resetAt) {
 		if !ok {
-			l.evictIfFull()
+			if len(l.hits) >= loginRateLimitMaxEntries {
+				l.pruneExpired(now)
+				l.evictIfFull()
+			}
 		}
 		l.hits[ip] = loginAttempt{count: 1, resetAt: now.Add(loginRateLimitWindow)}
 		return true

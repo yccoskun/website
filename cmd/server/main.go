@@ -12,6 +12,7 @@ import (
 	"github.com/yccoskun/website/internal/config"
 	"github.com/yccoskun/website/internal/database"
 	"github.com/yccoskun/website/internal/handlers"
+	"github.com/yccoskun/website/internal/securitylog"
 	"github.com/yccoskun/website/internal/services"
 	"github.com/yccoskun/website/internal/static"
 )
@@ -59,17 +60,21 @@ func main() {
 	pages := services.NewPageService(db)
 	resume := services.NewResumeService(db).WithPages(pages, media)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	deps := handlers.Deps{
-		DB:       db,
-		Posts:    services.NewPostService(db),
-		Resume:   resume,
-		Sessions: sessions,
-		Settings: services.NewSettingsService(db),
-		Pages:    pages,
-		Work:     services.NewWorkService(db),
-		Studio:   services.NewStudioService(db),
-		Media:    media,
-		Config:   cfg,
+		DB:         db,
+		Posts:      services.NewPostService(db),
+		Resume:     resume,
+		Sessions:   sessions,
+		Settings:   services.NewSettingsService(db),
+		Pages:      pages,
+		Work:       services.NewWorkService(db),
+		Studio:     services.NewStudioService(db),
+		Media:      media,
+		Config:     cfg,
+		Background: ctx,
 	}
 
 	srv := &http.Server{
@@ -82,10 +87,8 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	go runSessionCleanup(ctx, sessions)
+	go securitylog.Default.RunPruneLoop(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

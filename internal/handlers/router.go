@@ -34,6 +34,9 @@ func NewRouter(spa http.Handler, deps Deps) http.Handler {
 
 	trust := middleware.NewProxyTrust(deps.Config.TrustedProxies)
 	loginLimiter := middleware.NewLoginRateLimiter(trust)
+	if deps.Background != nil {
+		go loginLimiter.RunPruneLoop(deps.Background)
+	}
 	api.Handle("POST /api/admin/login", loginLimiter.Middleware(http.HandlerFunc(deps.AdminLogin)))
 
 	requireAuth := func(h http.HandlerFunc) http.Handler {

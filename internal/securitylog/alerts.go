@@ -1,6 +1,7 @@
 package securitylog
 
 import (
+	"context"
 	"strconv"
 	"sync"
 	"time"
@@ -14,14 +15,18 @@ const (
 	ReasonExport                    = "export"
 	ReasonImportReplace             = "import_replace"
 
-	loginFailureThreshold  = 5
-	loginFailureWindow     = 15 * time.Minute
-	loginSuccessPriorMin   = 5 // align with burst; typo-then-success must not page
-	mediaUploadThreshold   = 15
-	mediaUploadWindow      = 10 * time.Minute
-	rateLimitAlertWindow   = 15 * time.Minute
-	alertTrackerMaxEntries = 10_000
+	loginFailureThreshold    = 5
+	loginFailureWindow       = 15 * time.Minute
+	loginSuccessPriorMin     = 5 // align with burst; typo-then-success must not page
+	mediaUploadThreshold     = 15
+	mediaUploadWindow        = 10 * time.Minute
+	rateLimitAlertWindow     = 15 * time.Minute
+	alertTrackerMaxEntries   = 10_000
+	alertTrackerPruneDefault = time.Minute
 )
+
+// Overridable in tests via t.Cleanup restore.
+var alertTrackerPruneInterval = alertTrackerPruneDefault
 
 type ipWindow struct {
 	count   int
@@ -50,6 +55,24 @@ func NewAlertTracker() *AlertTracker {
 	}
 }
 
+// RunPruneLoop periodically removes expired tracker entries until ctx is cancelled.
+// Not started by NewAlertTracker; callers must start it when desired.
+func (t *AlertTracker) RunPruneLoop(ctx context.Context) {
+	ticker := time.NewTicker(alertTrackerPruneInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := t.clock()
+			t.mu.Lock()
+			t.pruneExpired(now)
+			t.mu.Unlock()
+		}
+	}
+}
+
 // LoginFailure records a failed login and emits login_failure with route=.
 // On the 5th failure in 15m for an IP, includes alert=1 reason=login_failure_burst (once per window).
 func (t *AlertTracker) LoginFailure(ip, route string) {
@@ -68,7 +91,6 @@ func (t *AlertTracker) LoginSuccess(ip, route string) {
 func (t *AlertTracker) RateLimit(ip, route string) {
 	t.mu.Lock()
 	now := t.clock()
-	t.pruneExpired(now)
 	alert := t.markAlertLocked(ip, ReasonRateLimit, now.Add(rateLimitAlertWindow), now)
 	t.mu.Unlock()
 
@@ -104,12 +126,14 @@ func (t *AlertTracker) loginFailureFields(ip, route string) []string {
 	defer t.mu.Unlock()
 
 	now := t.clock()
-	t.pruneExpired(now)
 
 	w, ok := t.loginFails[ip]
 	if !ok || now.After(w.resetAt) {
 		if !ok {
-			t.evictMapIfFull(t.loginFails)
+			if len(t.loginFails) >= alertTrackerMaxEntries {
+				t.pruneExpired(now)
+				t.evictMapIfFull(t.loginFails)
+			}
 		}
 		w = ipWindow{resetAt: now.Add(loginFailureWindow)}
 	}
@@ -128,7 +152,6 @@ func (t *AlertTracker) loginSuccessFields(ip, route string) []string {
 	defer t.mu.Unlock()
 
 	now := t.clock()
-	t.pruneExpired(now)
 
 	failures := 0
 	var failWindowEnd time.Time
@@ -156,12 +179,14 @@ func (t *AlertTracker) mediaUploadFields(ip, route string) []string {
 	defer t.mu.Unlock()
 
 	now := t.clock()
-	t.pruneExpired(now)
 
 	w, ok := t.mediaUploads[ip]
 	if !ok || now.After(w.resetAt) {
 		if !ok {
-			t.evictMapIfFull(t.mediaUploads)
+			if len(t.mediaUploads) >= alertTrackerMaxEntries {
+				t.pruneExpired(now)
+				t.evictMapIfFull(t.mediaUploads)
+			}
 		}
 		w = ipWindow{resetAt: now.Add(mediaUploadWindow)}
 	}
@@ -181,10 +206,16 @@ func (t *AlertTracker) mediaUploadFields(ip, route string) []string {
 
 func (t *AlertTracker) markAlertLocked(ip, reason string, windowEnd, now time.Time) bool {
 	key := ip + "\x00" + reason
-	if until, ok := t.alerted[key]; ok && now.Before(until) {
-		return false
+	if until, ok := t.alerted[key]; ok {
+		if now.Before(until) {
+			return false
+		}
+		delete(t.alerted, key)
 	}
-	t.evictAlertedIfFull()
+	if len(t.alerted) >= alertTrackerMaxEntries {
+		t.pruneExpired(now)
+		t.evictAlertedIfFull()
+	}
 	t.alerted[key] = windowEnd
 	return true
 }

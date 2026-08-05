@@ -2,6 +2,8 @@ package securitylog
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -239,6 +241,148 @@ func TestMediaUploadWindowReset(t *testing.T) {
 	if !strings.Contains(lastLine(buf), "alert=1") {
 		t.Fatalf("new window 15th upload should alert: %q", lastLine(buf))
 	}
+}
+
+func TestRateLimitReAlertAfterAlertedWindow(t *testing.T) {
+	tr := NewAlertTracker()
+	buf := captureLog(t)
+	now := time.Now()
+	tr.now = func() time.Time { return now }
+
+	const ip = "203.0.113.16"
+	tr.RateLimit(ip, "/api/admin/login")
+	if !strings.Contains(lastLine(buf), "alert=1") {
+		t.Fatalf("first rate limit should alert: %q", lastLine(buf))
+	}
+
+	buf.Reset()
+	tr.RateLimit(ip, "/api/admin/login")
+	if strings.Contains(lastLine(buf), "alert=1") {
+		t.Fatalf("second rate limit in window must not re-alert: %q", lastLine(buf))
+	}
+
+	now = now.Add(rateLimitAlertWindow + time.Second)
+	buf.Reset()
+	tr.RateLimit(ip, "/api/admin/login")
+	if !strings.Contains(lastLine(buf), "alert=1") {
+		t.Fatalf("after alerted window ends should re-alert: %q", lastLine(buf))
+	}
+}
+
+func TestLoginFailsEvictsWhenFull(t *testing.T) {
+	tr := NewAlertTracker()
+	now := time.Now()
+	tr.now = func() time.Time { return now }
+
+	tr.mu.Lock()
+	for i := 0; i < alertTrackerMaxEntries; i++ {
+		tr.loginFails[fmt.Sprintf("ip-%d", i)] = ipWindow{count: 1, resetAt: now.Add(time.Hour)}
+	}
+	tr.loginFails["ip-0"] = ipWindow{count: 1, resetAt: now.Add(time.Minute)}
+	tr.mu.Unlock()
+
+	tr.LoginFailure("new-client", "/api/admin/login")
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if got := len(tr.loginFails); got > alertTrackerMaxEntries {
+		t.Fatalf("size = %d, want <= %d", got, alertTrackerMaxEntries)
+	}
+	if _, ok := tr.loginFails["ip-0"]; ok {
+		t.Fatal("earliest-reset entry ip-0 should have been evicted")
+	}
+	if _, ok := tr.loginFails["new-client"]; !ok {
+		t.Fatal("new-client should be present")
+	}
+}
+
+func TestMediaUploadsEvictsWhenFull(t *testing.T) {
+	tr := NewAlertTracker()
+	now := time.Now()
+	tr.now = func() time.Time { return now }
+
+	tr.mu.Lock()
+	for i := 0; i < alertTrackerMaxEntries; i++ {
+		tr.mediaUploads[fmt.Sprintf("ip-%d", i)] = ipWindow{count: 1, resetAt: now.Add(time.Hour)}
+	}
+	tr.mediaUploads["ip-0"] = ipWindow{count: 1, resetAt: now.Add(time.Minute)}
+	tr.mu.Unlock()
+
+	tr.MediaUpload("new-client", "/api/admin/media")
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if got := len(tr.mediaUploads); got > alertTrackerMaxEntries {
+		t.Fatalf("size = %d, want <= %d", got, alertTrackerMaxEntries)
+	}
+	if _, ok := tr.mediaUploads["ip-0"]; ok {
+		t.Fatal("earliest-reset entry ip-0 should have been evicted")
+	}
+	if _, ok := tr.mediaUploads["new-client"]; !ok {
+		t.Fatal("new-client should be present")
+	}
+}
+
+func TestAlertedEvictsWhenFull(t *testing.T) {
+	tr := NewAlertTracker()
+	now := time.Now()
+	tr.now = func() time.Time { return now }
+
+	tr.mu.Lock()
+	for i := 0; i < alertTrackerMaxEntries; i++ {
+		key := fmt.Sprintf("ip-%d\x00%s", i, ReasonRateLimit)
+		tr.alerted[key] = now.Add(time.Hour)
+	}
+	tr.alerted["ip-0\x00"+ReasonRateLimit] = now.Add(time.Minute)
+	tr.mu.Unlock()
+
+	tr.RateLimit("new-client", "/api/admin/login")
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if got := len(tr.alerted); got > alertTrackerMaxEntries {
+		t.Fatalf("size = %d, want <= %d", got, alertTrackerMaxEntries)
+	}
+	if _, ok := tr.alerted["ip-0\x00"+ReasonRateLimit]; ok {
+		t.Fatal("earliest alerted entry ip-0 should have been evicted")
+	}
+	if _, ok := tr.alerted["new-client\x00"+ReasonRateLimit]; !ok {
+		t.Fatal("new-client should be present in alerted")
+	}
+}
+
+func TestRunPruneLoopRemovesExpired(t *testing.T) {
+	prev := alertTrackerPruneInterval
+	alertTrackerPruneInterval = 20 * time.Millisecond
+	t.Cleanup(func() { alertTrackerPruneInterval = prev })
+
+	tr := NewAlertTracker()
+	now := time.Now()
+	tr.now = func() time.Time { return now }
+
+	tr.mu.Lock()
+	tr.loginFails["expired"] = ipWindow{count: 3, resetAt: now.Add(-time.Minute)}
+	tr.loginFails["active"] = ipWindow{count: 1, resetAt: now.Add(time.Hour)}
+	tr.alerted["gone\x00"+ReasonRateLimit] = now.Add(-time.Second)
+	tr.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go tr.RunPruneLoop(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		tr.mu.Lock()
+		_, expiredOK := tr.loginFails["expired"]
+		_, activeOK := tr.loginFails["active"]
+		_, alertedOK := tr.alerted["gone\x00"+ReasonRateLimit]
+		tr.mu.Unlock()
+		if !expiredOK && activeOK && !alertedOK {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("prune loop did not remove expired entries in time")
 }
 
 func lastLine(buf *bytes.Buffer) string {

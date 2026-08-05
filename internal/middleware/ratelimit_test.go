@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -456,4 +457,83 @@ func TestAllowEvictsWhenFull(t *testing.T) {
 	if _, ok := limiter.hits["new-client"]; !ok {
 		t.Fatal("new-client should be present")
 	}
+}
+
+func TestAllowResetsExpiredIPWithoutFullPrune(t *testing.T) {
+	limiter := NewLoginRateLimiter(ProxyTrust{})
+	now := time.Now()
+	limiter.mu.Lock()
+	limiter.hits["203.0.113.10"] = loginAttempt{count: loginRateLimitMax, resetAt: now.Add(-time.Second)}
+	limiter.hits["other-expired"] = loginAttempt{count: 3, resetAt: now.Add(-time.Minute)}
+	limiter.mu.Unlock()
+
+	if !limiter.allow("203.0.113.10") {
+		t.Fatal("allow should reset expired same IP")
+	}
+	a, ok := limiter.hits["203.0.113.10"]
+	if !ok {
+		t.Fatal("same IP should be present after reset")
+	}
+	if a.count != 1 {
+		t.Fatalf("count = %d, want 1 after window reset", a.count)
+	}
+	if _, ok := limiter.hits["other-expired"]; !ok {
+		t.Fatal("other expired entries must not be pruned on allow hot path")
+	}
+}
+
+func TestAllowAtCapacityPrunesExpiredBeforeEvict(t *testing.T) {
+	limiter := NewLoginRateLimiter(ProxyTrust{})
+	now := time.Now()
+	limiter.mu.Lock()
+	for i := 0; i < loginRateLimitMaxEntries; i++ {
+		limiter.hits[fmt.Sprintf("expired-%d", i)] = loginAttempt{count: 1, resetAt: now.Add(-time.Minute)}
+	}
+	limiter.mu.Unlock()
+
+	if !limiter.allow("new-client") {
+		t.Fatal("allow new-client should succeed")
+	}
+	if got := len(limiter.hits); got > loginRateLimitMaxEntries {
+		t.Fatalf("size = %d, want <= %d", got, loginRateLimitMaxEntries)
+	}
+	for i := 0; i < loginRateLimitMaxEntries; i++ {
+		key := fmt.Sprintf("expired-%d", i)
+		if _, ok := limiter.hits[key]; ok {
+			t.Fatalf("expired entry %s should have been pruned", key)
+		}
+	}
+	if _, ok := limiter.hits["new-client"]; !ok {
+		t.Fatal("new-client should be present")
+	}
+}
+
+func TestRunPruneLoopRemovesExpired(t *testing.T) {
+	prev := loginRateLimitPruneInterval
+	loginRateLimitPruneInterval = 20 * time.Millisecond
+	t.Cleanup(func() { loginRateLimitPruneInterval = prev })
+
+	limiter := NewLoginRateLimiter(ProxyTrust{})
+	now := time.Now()
+	limiter.mu.Lock()
+	limiter.hits["expired"] = loginAttempt{count: 5, resetAt: now.Add(-time.Minute)}
+	limiter.hits["active"] = loginAttempt{count: 1, resetAt: now.Add(time.Hour)}
+	limiter.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go limiter.RunPruneLoop(ctx)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		limiter.mu.Lock()
+		_, expiredOK := limiter.hits["expired"]
+		_, activeOK := limiter.hits["active"]
+		limiter.mu.Unlock()
+		if !expiredOK && activeOK {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("prune loop did not remove expired entry in time")
 }

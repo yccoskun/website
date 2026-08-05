@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -18,16 +19,17 @@ import (
 
 // Deps holds handler dependencies injected at router construction.
 type Deps struct {
-	DB       *sql.DB
-	Posts    *services.PostService
-	Resume   *services.ResumeService
-	Sessions *services.SessionService
-	Settings *services.SettingsService
-	Pages    *services.PageService
-	Work     *services.WorkService
-	Studio   *services.StudioService
-	Media    *services.MediaService
-	Config   config.Config
+	DB         *sql.DB
+	Posts      *services.PostService
+	Resume     *services.ResumeService
+	Sessions   *services.SessionService
+	Settings   *services.SettingsService
+	Pages      *services.PageService
+	Work       *services.WorkService
+	Studio     *services.StudioService
+	Media      *services.MediaService
+	Config     config.Config
+	Background context.Context // optional; nil skips background prune loops
 }
 
 func (d Deps) clientIP(r *http.Request) string {
