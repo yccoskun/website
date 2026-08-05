@@ -7,7 +7,7 @@ import { formatDate } from "@/lib/dates";
 import { useDocumentMeta } from "@/lib/meta";
 import { handleAdminUnauthorized, useAdminSession } from "@/pages/admin/session";
 import type { OkResponse } from "@/types/admin";
-import type { Post } from "@/types/post";
+import type { AdminPostSummary } from "@/types/post";
 
 function StatusChip({ published }: { published: boolean }) {
   if (published) {
@@ -57,7 +57,7 @@ function DeleteConfirm({
 
 export function AdminPostsPage() {
   const { onUnauthorized } = useAdminSession();
-  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [posts, setPosts] = useState<AdminPostSummary[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
@@ -68,7 +68,7 @@ export function AdminPostsPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    void apiGet<Post[]>("/api/admin/posts")
+    void apiGet<AdminPostSummary[]>("/api/admin/posts")
       .then((data) => {
         setPosts(data);
         setLoading(false);

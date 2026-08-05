@@ -24,3 +24,15 @@ type PostSummary struct {
 	UpdatedAt   string  `json:"updated_at"`
 	PublishedAt *string `json:"published_at"`
 }
+
+// AdminPostSummary is the admin list DTO: metadata + published, no bodies.
+type AdminPostSummary struct {
+	ID          int64   `json:"id"`
+	Slug        string  `json:"slug"`
+	Title       string  `json:"title"`
+	Summary     string  `json:"summary"`
+	Published   bool    `json:"published"`
+	CreatedAt   string  `json:"created_at"`
+	UpdatedAt   string  `json:"updated_at"`
+	PublishedAt *string `json:"published_at"`
+}

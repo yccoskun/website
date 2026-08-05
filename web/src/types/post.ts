@@ -22,3 +22,15 @@ export interface PostSummary {
   updated_at: string;
   published_at: string | null;
 }
+
+/** Admin list DTO: metadata + published, no content bodies. */
+export interface AdminPostSummary {
+  id: number;
+  slug: string;
+  title: string;
+  summary: string;
+  published: boolean;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+}

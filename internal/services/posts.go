@@ -93,6 +93,8 @@ func isUniqueViolation(err error) bool {
 
 const postSummaryColumns = `id, slug, title, summary, created_at, updated_at, published_at`
 
+const adminPostSummaryColumns = `id, slug, title, summary, published, created_at, updated_at, published_at`
+
 // ListPublished returns published post summaries (no content bodies), newest first.
 func (s *PostService) ListPublished() ([]models.PostSummary, error) {
 	rows, err := s.db.Query(
@@ -144,16 +146,40 @@ func (s *PostService) GetBySlug(slug string) (models.Post, error) {
 	return p, nil
 }
 
-// AdminList returns all posts, newest first.
-func (s *PostService) AdminList() ([]models.Post, error) {
+// AdminList returns all post summaries for admin (no content bodies), newest first.
+func (s *PostService) AdminList() ([]models.AdminPostSummary, error) {
 	rows, err := s.db.Query(
-		`SELECT `+postColumns+` FROM posts ORDER BY created_at DESC, id DESC`,
+		`SELECT `+adminPostSummaryColumns+` FROM posts ORDER BY created_at DESC, id DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("admin list posts: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return collectPosts(rows)
+
+	out := make([]models.AdminPostSummary, 0)
+	for rows.Next() {
+		var (
+			sum         models.AdminPostSummary
+			published   int
+			publishedAt sql.NullString
+		)
+		if err := rows.Scan(
+			&sum.ID, &sum.Slug, &sum.Title, &sum.Summary, &published,
+			&sum.CreatedAt, &sum.UpdatedAt, &publishedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan admin post summary: %w", err)
+		}
+		sum.Published = published != 0
+		if publishedAt.Valid {
+			v := publishedAt.String
+			sum.PublishedAt = &v
+		}
+		out = append(out, sum)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admin post summaries: %w", err)
+	}
+	return out, nil
 }
 
 // GetByID returns any post by id.
@@ -294,17 +320,3 @@ func (s *PostService) Delete(id int64) error {
 	return nil
 }
 
-func collectPosts(rows *sql.Rows) ([]models.Post, error) {
-	out := make([]models.Post, 0)
-	for rows.Next() {
-		p, err := scanPost(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan post: %w", err)
-		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate posts: %w", err)
-	}
-	return out, nil
-}

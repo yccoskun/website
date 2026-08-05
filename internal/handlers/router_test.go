@@ -2727,3 +2727,99 @@ func TestUnknownAdminPathWithoutCookieReturns404(t *testing.T) {
 	rec := doRequest(t, http.MethodPost, "/api/admin/nonexistent")
 	assertEnvelope(t, rec, http.StatusNotFound, `{"data":null,"error":"not found"}`)
 }
+
+func TestAdminListPostsOmitsContentBodies(t *testing.T) {
+	db := openTestDB(t)
+	hash, err := bcrypt.GenerateFromPassword([]byte("testpass"), 12)
+	if err != nil {
+		t.Fatalf("bcrypt: %v", err)
+	}
+	router := newIntegrationRouter(t, db, config.Config{
+		AdminUsername:     "admin",
+		AdminPasswordHash: string(hash),
+	})
+	cookie := loginTestAdmin(t, router)
+
+	create := func(payload string) int64 {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/posts", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var env struct {
+			Data struct {
+				ID int64 `json:"id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("unmarshal create: %v", err)
+		}
+		return env.Data.ID
+	}
+
+	_ = create(`{"slug":"older-admin","title":"Older Admin","summary":"s1","content_md":"## Draft body\n\nWith **markdown**.","published":false}`)
+	newerID := create(`{"slug":"newer-admin","title":"Newer Admin","summary":"s2","content_md":"# Published admin body with HTML render","published":true}`)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/posts", nil)
+	listReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+	listRec := httptest.NewRecorder()
+	router.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+
+	var listEnv struct {
+		Data  []map[string]json.RawMessage `json:"data"`
+		Error *string                      `json:"error"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &listEnv); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if listEnv.Error != nil {
+		t.Fatalf("list error = %v", *listEnv.Error)
+	}
+	if len(listEnv.Data) != 2 {
+		t.Fatalf("list len = %d, want 2; body = %s", len(listEnv.Data), listRec.Body.String())
+	}
+	if listEnv.Data[0]["slug"] == nil || string(listEnv.Data[0]["slug"]) != `"newer-admin"` {
+		t.Fatalf("first slug = %s, want newer-admin; body = %s", listEnv.Data[0]["slug"], listRec.Body.String())
+	}
+	for i, item := range listEnv.Data {
+		for _, forbidden := range []string{"content_md", "content_html"} {
+			if _, ok := item[forbidden]; ok {
+				t.Fatalf("list item[%d] has forbidden key %q: %s", i, forbidden, listRec.Body.String())
+			}
+		}
+		for _, required := range []string{"published", "title", "slug", "created_at", "updated_at"} {
+			if _, ok := item[required]; !ok {
+				t.Fatalf("list item[%d] missing %q: %s", i, required, listRec.Body.String())
+			}
+		}
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/posts/"+strconv.FormatInt(newerID, 10), nil)
+	getReq.Header.Set("Cookie", auth.SessionCookieName+"="+cookie)
+	getRec := httptest.NewRecorder()
+	router.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", getRec.Code, getRec.Body.String())
+	}
+	var getEnv struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &getEnv); err != nil {
+		t.Fatalf("unmarshal get: %v", err)
+	}
+	md := string(getEnv.Data["content_md"])
+	html := string(getEnv.Data["content_html"])
+	if md == "" || md == `""` || md == "null" {
+		t.Fatalf("get content_md empty: %s", getRec.Body.String())
+	}
+	if html == "" || html == `""` || html == "null" {
+		t.Fatalf("get content_html empty: %s", getRec.Body.String())
+	}
+}
